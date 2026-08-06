@@ -41,3 +41,9 @@ jobs:
             || { echo "::error::worker/src/shared is stale — run 'npm run sync:worker' and commit."; exit 1; }
       - run: npm run lint
       - run: npm test
+      # 编译验证 macOS WidgetKit 小组件（无签名构建），防止 Swift 代码漂移
+      - name: Build macOS widget extension
+        if: runner.os == 'macOS'
+        run: |
+          brew install xcodegen
+          scripts/build-widget.sh

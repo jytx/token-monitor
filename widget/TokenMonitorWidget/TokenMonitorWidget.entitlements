@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.com.javis.tokenmonitor</string>
+	</array>
+	<!-- 数据通道：widget 读自己的沙箱 Documents（宿主非沙箱直接按路径写入）。
+	     注意：不要加 temporary-exception 例外 —— 实测会导致系统拒绝加载扩展
+	     （macOS 26），也不要依赖 App Group 容器（宿主非沙箱时 datavault 拒读）。 -->
+</dict>
+</plist>

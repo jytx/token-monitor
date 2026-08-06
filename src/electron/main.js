@@ -17,6 +17,7 @@ const {
 } = require('../shared/credentialStore');
 const { installSafeStdout } = require('../shared/safeStdio');
 const { appVersion } = require('../shared/appVersion');
+const { buildWidgetSnapshot, writeWidgetSnapshot } = require('../shared/widgetSnapshot');
 const { exportFileSet, exportSignature, EXPORT_FILENAMES } = require('../shared/exporter');
 const { createDefaultTrayLayout, normalizeTrayLayout } = require('../shared/trayLayout');
 const motionPreferenceApi = require('./motionPreference');
@@ -310,6 +311,8 @@ function defaultSettings() {
     floatingBubbleEnabled: false,
     floatingBubbleTrigger: 'click',
     floatingBubbleContent: 'icon',
+    // macOS WidgetKit 小组件：默认开启，仅在 darwin 生效（其他平台写入即跳过）
+    widgetEnabled: true,
     floatingBubbleCustomLayout: createDefaultTrayLayout(),
     floatingBubbleBounds: null,
     lastViewState: { period: 'today', breakdown: 'tool' },
@@ -2010,6 +2013,7 @@ function readSettings() {
     merged.hubHostPort = normalizeHubPort(merged.hubHostPort);
     merged.hubHostSecret = typeof merged.hubHostSecret === 'string' ? merged.hubHostSecret : '';
     merged.floatingBubbleEnabled = parseBoolean(merged.floatingBubbleEnabled ?? merged.edgeDrawerEnabled, false);
+    merged.widgetEnabled = parseBoolean(merged.widgetEnabled ?? true, true);
     merged.archivedClientUsage = normalizeArchivedClientUsage(merged.archivedClientUsage);
     delete merged.edgeDrawerEnabled;
     merged.floatingBubbleTrigger = merged.floatingBubbleTrigger === 'hover' ? 'hover' : 'click';
@@ -3164,6 +3168,14 @@ function sendPush(payload) {
   if (payload?.data?.stats) {
     injectLocalDeviceStatus(payload.data.stats);
     latestStats = payload.data.stats;
+    // macOS WidgetKit 小组件快照：每次 stats 刷新写一次 App Group 共享文件。
+    // 写入失败静默降级，不影响主流程；非 darwin 平台直接跳过。
+    if (process.platform === 'darwin' && settings.widgetEnabled !== false) {
+      writeWidgetSnapshot(buildWidgetSnapshot(latestStats, {
+        currency: settings.currency,
+        appVersion: appVersion()
+      }));
+    }
     syncTrayCodexActiveAccount();
     updateTrayDisplay();
     if (settings.exportAutoEnabled && settings.exportDir && Date.now() - lastExportAt >= exportIntervalMs()) {
@@ -4850,6 +4862,15 @@ function rebuildWindow() {
     if (wasFocused && !mainWindow.isDestroyed()) mainWindow.focus();
   });
 }
+
+// macOS WidgetKit 小组件点击 → tokenmonitor:// 唤起 → 显示/聚焦主窗口
+// （URL scheme 在 package.json 的 build.mac.protocols 中注册）
+app.on('open-url', (event, url) => {
+  if (String(url).startsWith('tokenmonitor://')) {
+    event.preventDefault();
+    focusExistingWindow();
+  }
+});
 
 app.whenReady().then(() => {
   if (process.platform === 'darwin' && app.dock) app.dock.setIcon(APP_ICON_PATH);

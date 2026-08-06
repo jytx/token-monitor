@@ -1,6 +1,7 @@
 node_modules/
 data/
-build/
+build/*
+!build/entitlements.mac.plist
 dist/
 _site/
 .agents/
@@ -23,3 +24,6 @@ worker/.wrangler/
 worker/node_modules/
 worker/.dev.vars
 devlog/
+# macOS WidgetKit 小组件：xcodegen 生成物与构建产物不入库
+widget/TokenMonitorWidget.xcodeproj/
+widget/build/

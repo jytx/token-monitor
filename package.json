@@ -38,6 +38,8 @@
       "assets/icons/**/*",
       "package.json"
     ],
+    "afterPack": "scripts/electron-afterPack.js",
+    "afterSign": "scripts/electron-afterSign.js",
     "asarUnpack": [
       "node_modules/@tokscale/**/*",
       "node_modules/tokscale/**/*",
@@ -54,7 +56,17 @@
       "icon": "assets/icon.png",
       "extendInfo": {
         "LSUIElement": true
-      }
+      },
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "protocols": [
+        {
+          "name": "Token Monitor",
+          "schemes": [
+            "tokenmonitor"
+          ]
+        }
+      ]
     },
     "win": {
       "target": [

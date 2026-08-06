@@ -28,7 +28,7 @@ function limits(updatedAt = '2026-07-21T01:00:05.000Z', status = 'ok') {
   };
 }
 
-test('buffers limits until usage exists instead of emitting a zero-period record', () => {
+test('limits arriving before first usage are emitted alongside the envelope without fabricating a zero record', () => {
   const emitted = [];
   const state = createDeviceState({
     epoch: 7,
@@ -36,16 +36,22 @@ test('buffers limits until usage exists instead of emitting a zero-period record
     onRecord: (record, meta) => emitted.push({ record, meta })
   });
 
-  assert.equal(state.updateLimits(limits(), 'startup', { epoch: 7 }), null);
-  assert.equal(state.getSnapshot(), null);
-  assert.equal(emitted.length, 0);
-
-  const record = state.updateUsage(usage(), 'startup', { epoch: 7 });
-  assert.equal(record.deviceId, 'configured-device');
-  assert.equal(record.today.totalTokens, 10);
-  assert.equal(record.limits.providers[0].provider, 'codex');
+  const limitsRecord = state.updateLimits(limits(), 'startup', { epoch: 7 });
+  assert.equal(limitsRecord.deviceId, 'configured-device');
+  assert.equal(limitsRecord.limits.providers[0].provider, 'codex');
+  // 关键不变量：usage 还没就绪时，record 不能凭空造出 today/month/allTime 零值，
+  // 否则渲染器会在用量尚未到达时显示一个伪 0 状态，混淆"额度先到、用量在路上"的语义。
+  assert.equal(Object.hasOwn(limitsRecord, 'today'), false);
+  assert.equal(Object.hasOwn(limitsRecord, 'month'), false);
+  assert.equal(Object.hasOwn(limitsRecord, 'allTime'), false);
   assert.equal(emitted.length, 1);
-  assert.deepEqual(emitted[0].meta, { revision: 1, source: 'usage', reason: 'startup', epoch: 7 });
+  assert.deepEqual(emitted[0].meta, { revision: 1, source: 'limits', reason: 'startup', epoch: 7 });
+
+  const usageRecord = state.updateUsage(usage(), 'startup', { epoch: 7 });
+  assert.equal(usageRecord.today.totalTokens, 10);
+  assert.equal(usageRecord.limits.providers[0].provider, 'codex');
+  assert.equal(emitted.length, 2);
+  assert.deepEqual(emitted[1].meta, { revision: 2, source: 'usage', reason: 'startup', epoch: 7 });
 });
 
 test('usage emits immediately and a later limits update emits a second full record', () => {

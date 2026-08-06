@@ -1,0 +1,37 @@
+# Token Monitor 的 macOS WidgetKit 小组件工程配置
+# 使用 xcodegen 生成 TokenMonitorWidget.xcodeproj：
+#   xcodegen generate --spec project.yml
+# 工程文件本身不入库（.gitignore 已排除），入库的只有本目录下的源文件。
+name: TokenMonitorWidget
+options:
+  bundleIdPrefix: com.javis.tokenmonitor
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    CODE_SIGN_STYLE: Manual
+    # 小组件随主应用分发，由 electron-builder 的 afterSign 统一签名；
+    # 本地开发构建使用 ad-hoc 签名，见 scripts/build-widget.sh
+    CODE_SIGN_IDENTITY: "-"
+    ENABLE_HARDENED_RUNTIME: YES
+targets:
+  TokenMonitorWidget:
+    type: app-extension
+    platform: macOS
+    sources:
+      - TokenMonitorWidget
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.javis.tokenmonitor.widget
+        PRODUCT_NAME: TokenMonitorWidget
+        INFOPLIST_FILE: TokenMonitorWidget/Info.plist
+        CODE_SIGN_ENTITLEMENTS: TokenMonitorWidget/TokenMonitorWidget.entitlements
+        SKIP_INSTALL: YES
+        # 构建时跳过签名：macOS 上 app-extension 无 profile 无法自动签名。
+        # 产物由 electron-builder 的 afterSign（Developer ID）或本地
+        # scripts 组装流程（ad-hoc）统一签名，见 docs/widget.md。
+        CODE_SIGNING_ALLOWED: NO
+        # 构建产物路径由 scripts/build-widget.sh 传入，便于 afterPack 直接拷贝
+        CONFIGURATION_BUILD_DIR: $(BUILD_DIR)/$(CONFIGURATION)

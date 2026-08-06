@@ -65,6 +65,13 @@ jobs:
         run: |
           echo "${{ secrets.APPLE_API_KEY_BASE64 }}" | base64 --decode > "$RUNNER_TEMP/apple_api_key.p8"
           echo "APPLE_API_KEY=$RUNNER_TEMP/apple_api_key.p8" >> "$GITHUB_ENV"
+      # 构建 macOS WidgetKit 小组件扩展（ad-hoc 签名即可，afterSign 会用
+      # Developer ID 重签），electron-builder 的 afterPack 会把它装进 .app。
+      - name: Build macOS widget extension
+        if: matrix.target == 'mac'
+        run: |
+          brew install xcodegen
+          scripts/build-widget.sh
       # APPIMAGE_EXTRACT_AND_RUN lets electron-builder's bundled appimagetool
       # run without libfuse2 (absent on the runners).
       - name: Build platform artifacts
@@ -94,6 +101,7 @@ jobs:
             exit 1
           fi
           codesign --verify --deep --strict --verbose=2 "$app_path"
+          codesign --verify --strict --verbose=2 "$app_path/Contents/PlugIns/TokenMonitorWidget.appex"
           spctl -a -vvv --type execute "$app_path"
           xcrun stapler validate "$app_path"
           xcrun notarytool submit "$dmg_path" \

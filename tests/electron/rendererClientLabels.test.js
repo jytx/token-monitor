@@ -13,7 +13,10 @@ function rendererStyles() {
   return fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'electron', 'renderer', 'styles.css'), 'utf8');
 }
 
-function clientLabelIds(source) {
+// clientLabels 的唯一数据源是 src/shared/clientLabels.js（renderer 与
+// widgetSnapshot 共用）；KNOWN_CLIENTS 仍声明在 app.js。
+function clientLabelIds() {
+  const source = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'shared', 'clientLabels.js'), 'utf8');
   const match = source.match(/const clientLabels = \{([^}]+)\};/);
   assert.ok(match, 'clientLabels declaration should exist');
   return new Set([...match[1].matchAll(/([a-z0-9_-]+)\s*:/g)].map((item) => item[1]));
@@ -26,9 +29,8 @@ function knownClientIds(source) {
 }
 
 test('renderer client labels cover every known client', () => {
-  const source = rendererSource();
-  const labels = clientLabelIds(source);
-  const missing = knownClientIds(source).filter((id) => !labels.has(id));
+  const labels = clientLabelIds();
+  const missing = knownClientIds(rendererSource()).filter((id) => !labels.has(id));
 
   assert.deepEqual(missing, []);
 });

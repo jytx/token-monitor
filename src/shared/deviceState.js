@@ -77,14 +77,21 @@ function createDeviceState(options = {}) {
   }
 
   function publish(source, reason) {
-    if (!usagePart || stopped) return null;
-    const record = { ...cloneValue(usagePart), ...cloneValue(envelope) };
-    if (limitsPart !== undefined) record.limits = cloneValue(limitsPart);
-    currentRecord = record;
+    if (stopped) return null;
+    // 原本这里 `if (!usagePart) return null` 会把 limits 数据挡在门外——collector
+    // 首次 full scan 完成前（usagePart 还没填），limits fetch 早就回来了也推不出去，
+    // 用户点开 tray 弹窗只能看到空白，必须等到下一次 interval refresh 才能看到额度。
+    // 放开后：usage 没就绪时也能把 limits 推出去，让 renderer 立即填回额度行；
+    // usage 一就绪就在下一次 publish 里把整张 record 补齐，行为不变。
+    const baseRecord = usagePart
+      ? { ...cloneValue(usagePart), ...cloneValue(envelope) }
+      : { ...cloneValue(envelope) };
+    if (limitsPart !== undefined) baseRecord.limits = cloneValue(limitsPart);
+    currentRecord = baseRecord;
     revision += 1;
     const meta = { revision, source, reason, epoch };
-    if (onRecord) onRecord(cloneValue(record), meta);
-    return cloneValue(record);
+    if (onRecord) onRecord(cloneValue(baseRecord), meta);
+    return cloneValue(baseRecord);
   }
 
   function updateUsage(summary, reason = 'usage', meta = {}) {
