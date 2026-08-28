@@ -1197,6 +1197,10 @@ span.settings-note.settings-item-desc {
   border-radius: 6px;
   background: rgba(var(--sunken-rgb), 0.36);
 }
+/* 带拖拽把手的行多一列（把手 | 勾选 | 主体 | 右侧） */
+.managed-account-row.reorderable {
+  grid-template-columns: 14px 20px minmax(0, 1fr) auto;
+}
 .managed-account-row.disabled .managed-account-email,
 .managed-account-row.disabled .managed-account-info {
   color: var(--muted);
@@ -1238,6 +1242,53 @@ span.settings-note.settings-item-desc {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
+}
+.managed-account-grip {
+  flex: 0 0 auto;
+  width: 14px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+  cursor: grab;
+  opacity: 0.45;
+  user-select: none;
+  transition: opacity 0.15s, color 0.15s;
+}
+.managed-account-row:hover .managed-account-grip {
+  opacity: 0.85;
+}
+.managed-account-grip:active {
+  cursor: grabbing;
+  color: var(--text);
+}
+/* 拖拽中的行：半透明「提起」，其余行由 FLIP 动画滑动让位 */
+.managed-account-row.dragging {
+  opacity: 0.4;
+  background: transparent;
+  border-style: dashed;
+}
+.managed-account-rename {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+  opacity: 0.55;
+  transition: opacity 0.15s, color 0.15s, background 0.15s;
+}
+.managed-account-row:hover .managed-account-rename {
+  opacity: 0.85;
+}
+.managed-account-rename:hover {
+  opacity: 1;
+  color: var(--text);
 }
 .managed-account-remove {
   flex: 0 0 auto;

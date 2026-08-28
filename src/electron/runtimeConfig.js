@@ -71,10 +71,10 @@ const LIMIT_PROVIDER_SETTING_KEYS = Object.freeze({
   cursor: ['cursorDisabledAccountIds'],
   opencode: ['opencodeCookie', 'opencodeProfiles', 'opencodeLocalLimitsEnabled'],
   openrouter: ['openrouterProfiles'],
-  deepseek: ['deepseekApiKey'],
-  minimax: ['minimaxApiKey'],
+  deepseek: ['deepseekApiKey', 'deepseekManagedAccounts'],
+  minimax: ['minimaxApiKey', 'minimaxManagedAccounts'],
   copilot: ['copilotApiToken', 'copilotEnterpriseHost'],
-  zai: ['zaiApiKey', 'zaiApiRegion'],
+  zai: ['zaiApiKey', 'zaiApiRegion', 'zaiManagedAccounts'],
   zaiteam: ['zaiTeamApiKey', 'zaiTeamOrganizationId', 'zaiTeamProjectId'],
   volcengine: [
     'volcengineAccessKeyId', 'volcengineSecretAccessKey', 'volcengineRegion',
@@ -233,6 +233,9 @@ function limitsConfigFromSettings(settings = {}, context = {}) {
     ollamaCookie: settings.ollamaCookie || '',
     codexManagedAccounts: context.codexManagedAccounts ?? settings.codexManagedAccounts ?? [],
     mimoManagedAccounts: context.mimoManagedAccounts ?? settings.mimoManagedAccounts ?? [],
+    minimaxManagedAccounts: context.minimaxManagedAccounts ?? settings.minimaxManagedAccounts ?? [],
+    deepseekManagedAccounts: context.deepseekManagedAccounts ?? settings.deepseekManagedAccounts ?? [],
+    zaiManagedAccounts: context.zaiManagedAccounts ?? settings.zaiManagedAccounts ?? [],
     thirdPartyProfiles: settings.thirdPartyProfiles || {}
   };
 }

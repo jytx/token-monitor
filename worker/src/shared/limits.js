@@ -515,21 +515,15 @@ function isConfiguredProvider(provider) {
   return Boolean(provider.accountKey && provider.status !== 'notConfigured' && provider.status !== 'disabled');
 }
 
+// 聚合时按 provider:accountKey 保留多行的供应商：多账号供应商（minimax/
+// deepseek/zai 走 apiKeyAccounts 通用层）每账号一条；cursor/volcengine 并非
+// 用户维护的多账号，但会出现多个 accountKey——cursor 的 OAuth 账号键天然
+// 多行，volcengine 的键来自 AK/SK 与区域，两键是 Coding/Agent 套餐拆分而非
+// 同一账号哈希两次——同样必须分行。其余供应商折叠为单行（同名择优）。
+const MULTI_ACCOUNT_PROVIDER_IDS = new Set(['claude', 'codex', 'opencode', 'openrouter', 'thirdparty', 'mimo', 'minimax', 'deepseek', 'zai', 'cursor', 'volcengine']);
+
 function providerCollapseKey(provider) {
-  if (
-    (provider.provider === 'claude'
-      || provider.provider === 'codex'
-      || provider.provider === 'opencode'
-      || provider.provider === 'openrouter'
-      || provider.provider === 'thirdparty'
-      || provider.provider === 'mimo'
-      || provider.provider === 'cursor'
-      // Volcengine's accountKey comes from the AK/SK and region, so it is the
-      // same on every platform. Two keys mean the Coding/Agent plan split, not
-      // one account hashed twice.
-      || provider.provider === 'volcengine')
-    && isConfiguredProvider(provider)
-  ) {
+  if (MULTI_ACCOUNT_PROVIDER_IDS.has(provider.provider) && isConfiguredProvider(provider)) {
     return providerAggregateKey(provider);
   }
   return provider.provider;
