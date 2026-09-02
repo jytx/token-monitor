@@ -5,9 +5,16 @@
   if (typeof module === 'object' && module.exports) module.exports = api;
   if (root) root.TokenMonitorStatsRenderScheduler = api;
 })(typeof window !== 'undefined' ? window : null, function createStatsRenderSchedulerApi() {
+  function visibleStatsSurface(rendererHidden, floatingBubbleCollapsed, settingsOpen) {
+    if (rendererHidden) return null;
+    if (floatingBubbleCollapsed) return 'bubble';
+    return settingsOpen ? 'settings' : 'main';
+  }
+
   function createStatsRenderScheduler({ isHidden, render }) {
     if (typeof isHidden !== 'function') throw new TypeError('isHidden must be a function');
     if (typeof render !== 'function') throw new TypeError('render must be a function');
+    let rendererHidden = isHidden();
     let renderPending = false;
 
     function request() {
@@ -25,13 +32,27 @@
       renderPending = false;
     }
 
+    function clear() {
+      renderPending = false;
+    }
+
+    function visibilityChanged() {
+      const hidden = isHidden();
+      if (hidden === rendererHidden) return false;
+      rendererHidden = hidden;
+      return true;
+    }
+
     return {
+      clear,
       flush,
-      request
+      request,
+      visibilityChanged
     };
   }
 
   return {
-    createStatsRenderScheduler
+    createStatsRenderScheduler,
+    visibleStatsSurface
   };
 });

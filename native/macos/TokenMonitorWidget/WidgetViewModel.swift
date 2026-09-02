@@ -718,6 +718,7 @@ enum WidgetFormat {
         case "cursor": "Cursor"
         case "antigravity": "Antigravity"
         case "kimi": "Kimi"
+        case "zed": "Zed"
         case "grok": "Grok"
         case "copilot": "GitHub Copilot"
         case "mimo": "MiMo"

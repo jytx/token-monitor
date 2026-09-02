@@ -954,6 +954,65 @@ test('compact provider windows preserve Claude session plus general weekly', () 
   assert.equal(selection.secondaryWindow.label, undefined);
 });
 
+test('compact provider windows keep Codex main quotas ahead of named reserve quotas', () => {
+  const selection = compactLimitSelection({
+    provider: 'codex',
+    status: 'ok',
+    windows: [
+      { kind: 'session', remainingPercent: 70 },
+      { kind: 'weekly', remainingPercent: 80 },
+      { kind: 'session', label: 'Session', limitId: 'gpt-reserve', additional: true, remainingPercent: 10 },
+      { kind: 'weekly', label: 'Weekly', limitId: 'gpt-reserve', additional: true, remainingPercent: 20 }
+    ]
+  });
+
+  assert.equal(selection.primaryWindow.kind, 'session');
+  assert.equal(selection.primaryWindow.label, undefined);
+  assert.equal(selection.secondaryWindow.kind, 'weekly');
+  assert.equal(selection.secondaryWindow.label, undefined);
+});
+
+test('compact Codex windows do not promote an additional session over a canonical weekly quota', () => {
+  const selection = compactLimitSelection({
+    provider: 'codex',
+    status: 'ok',
+    windows: [
+      { kind: 'weekly', remainingPercent: 80 },
+      { kind: 'session', label: '', limitId: 'gpt-reserve', additional: true, remainingPercent: 10 }
+    ]
+  });
+
+  assert.equal(selection.primaryWindow.kind, 'weekly');
+  assert.equal(selection.primaryWindow.label, undefined);
+  assert.equal(selection.secondaryWindow, null);
+});
+
+test('compact Codex windows do not use an additional weekly quota as a secondary window', () => {
+  const selection = compactLimitSelection({
+    provider: 'codex',
+    status: 'ok',
+    windows: [
+      { kind: 'session', remainingPercent: 70 },
+      { kind: 'weekly', label: 'Weekly', limitId: 'gpt-reserve', additional: true, remainingPercent: 20 }
+    ]
+  });
+
+  assert.equal(selection.primaryWindow.kind, 'session');
+  assert.equal(selection.primaryWindow.label, undefined);
+  assert.equal(selection.secondaryWindow, null);
+});
+
+test('compact Codex selection ignores providers with additional quota windows only', () => {
+  assert.equal(compactLimitSelection({
+    provider: 'codex',
+    status: 'ok',
+    windows: [
+      { kind: 'session', label: 'Session', limitId: 'gpt-reserve', additional: true, remainingPercent: 10 },
+      { kind: 'weekly', label: 'Weekly', limitId: 'gpt-reserve', additional: true, remainingPercent: 20 }
+    ]
+  }), null);
+});
+
 test('compact provider windows show Volcengine 5-hour plus Daily before broader windows', () => {
   const selection = compactLimitSelection({
     provider: 'volcengine',

@@ -21,7 +21,7 @@
     claude: { oauth: 'OAuth', cli: 'CLI', web: 'Web' },
     codex: { rpc: 'RPC' },
     cursor: { web: 'Web' },
-    antigravity: { rpc: 'RPC' },
+    antigravity: { oauth: 'OAuth', rpc: 'RPC' },
     opencode: { local: 'Local', web: 'Web', api: 'API' },
     openrouter: { api: 'API' },
     deepseek: { api: 'API' },
@@ -29,6 +29,7 @@
     mimo: { web: 'Web' },
     grok: { rpc: 'CLI', web: 'Web' },
     copilot: { api: 'API' },
+    zed: { web: 'Web' },
     kiro: { cli: 'CLI' },
     zai: { api: 'API' },
     zaiteam: { api: 'API' },
@@ -53,7 +54,7 @@
     claude: ['Auto', 'OAuth/CLI', 'Web'],
     codex: ['Auto', 'OAuth/App/CLI'],
     cursor: ['Auto', 'Web'],
-    antigravity: ['App/CLI must be open', 'RPC'],
+    antigravity: ['Auto', 'OAuth/App/CLI'],
     opencode: ['Auto', 'API/Web'],
     openrouter: ['Pay-as-you-go', 'API key'],
     deepseek: ['Pay-as-you-go', 'API key'],
@@ -61,6 +62,7 @@
     mimo: ['Token Plan', 'Web'],
     grok: ['Auto', 'CLI/Web'],
     copilot: ['Manual login', 'API'],
+    zed: ['Manual login', 'Web'],
     kiro: ['Auto', 'CLI'],
     zai: ['Coding Plan', 'API key'],
     zaiteam: ['Team Plan', 'API key'],
@@ -74,12 +76,6 @@
     thirdparty: ['Relay', 'API']
   };
 
-  // Capability hint -> the status label it would duplicate. When that status is
-  // active, the hint is suppressed so the row doesn't show two tags saying the
-  // same thing (see limitProviderSettingsTags).
-  const CAPABILITY_STATUS_DUPLICATES = {
-    'App/CLI must be open': 'Open app or CLI'
-  };
   const COMPACT_LIMIT_CRITICAL_PERCENT = 20;
 
   function normalizeId(value) {
@@ -133,6 +129,21 @@
     return label.replace(/^[a-z]/, (letter) => letter.toUpperCase());
   }
 
+  function limitProviderPlanDisplayLabel(providerOrId, value) {
+    const label = limitProviderDisplayLabel(value);
+    if (providerId(providerOrId) !== 'zed') return label;
+    // Zed's API returns canonical names such as "Zed Student" and "Zed Pro".
+    // The provider heading already supplies "Zed", so keep only the meaningful
+    // plan portion in both the Limits card and managed-account row. Unknown
+    // custom plan names pass through untouched.
+    return label.replace(/^Zed\s+/iu, '').trim() || label;
+  }
+
+  function codexAdditionalQuotaDisplayName(value) {
+    const name = String(value || '').trim();
+    return normalizeId(name) === 'gpt-reserve' ? 'Luna Reserve' : name;
+  }
+
   function antigravityQuotaWindow(window) {
     const kind = normalizeId(window?.kind);
     const suffix = kind === 'session'
@@ -147,6 +158,10 @@
     return { groupLabel, windowLabel: kind === 'session' ? '5-hour' : 'Weekly' };
   }
 
+  function isCanonicalCodexWindow(window) {
+    return window?.additional !== true;
+  }
+
   function compactWindowRemaining(window) {
     const rawRemaining = window?.remainingPercent;
     const remaining = rawRemaining == null || String(rawRemaining).trim() === '' ? null : Number(rawRemaining);
@@ -159,7 +174,17 @@
   }
 
   function limitProviderCompactWindows(providerOrId, windows = []) {
-    if (providerId(providerOrId) !== 'antigravity') return windows;
+    const provider = providerId(providerOrId);
+    if (provider === 'codex') return (windows || []).filter(isCanonicalCodexWindow);
+    if (provider === 'zed') {
+      return (windows || []).map((window) => (
+        window?.limitId === 'zed.edit-predictions'
+          && normalizeId(window?.detail) === 'unlimited'
+          ? { ...window, value: 'Unlimited', resetDescription: '' }
+          : window
+      ));
+    }
+    if (provider !== 'antigravity') return windows;
     const entries = (windows || []).map((window, index) => ({
       window,
       index,
@@ -246,7 +271,8 @@
     return (providerName === 'claude' && source === 'web')
       || providerName === 'cursor'
       || (providerName === 'opencode' && source === 'web')
-      || (providerName === 'mimo' && source === 'web');
+      || (providerName === 'mimo' && source === 'web')
+      || (providerName === 'zed' && source === 'web');
   }
 
   function limitProviderStatusLabel(provider = {}) {
@@ -254,6 +280,13 @@
     const status = statusId(provider);
 
     if (provider?.stale) return { label: 'Stale', tone: 'stale' };
+    if (providerName === 'antigravity' && provider?.actionRequired === 'accountVerification') {
+      return {
+        label: 'Open Antigravity to verify',
+        key: 'settings.antigravity.verificationRequired',
+        tone: 'setup'
+      };
+    }
     if (status === 'ok') return { label: isLinkedStatus(provider) ? 'Linked' : 'Live', tone: 'ok' };
     if (status === 'disabled') return { label: 'Disabled', tone: 'muted' };
     if (status === 'noSyncedData') return { label: 'No synced data', tone: 'sync' };
@@ -274,8 +307,8 @@
     if (providerName === 'mimo' && status === 'error') return { label: 'Unavailable', tone: 'warn' };
     if (status === 'notConfigured') {
       if (providerName === 'kimi') return { label: 'Add credential', tone: 'setup' };
-      if (providerName === 'antigravity') return { label: 'Open app or CLI', tone: 'setup' };
-      if (providerName === 'cursor' || providerName === 'copilot' || providerName === 'qoder' || providerName === 'trae' || providerName === 'workbuddy' || providerName === 'commandcode' || providerName === 'ollama') return { label: 'Sign in', tone: 'setup' };
+      if (providerName === 'antigravity') return { label: 'Not set up', tone: 'setup' };
+      if (providerName === 'cursor' || providerName === 'copilot' || providerName === 'zed' || providerName === 'qoder' || providerName === 'trae' || providerName === 'workbuddy' || providerName === 'commandcode' || providerName === 'ollama') return { label: 'Sign in', tone: 'setup' };
       if (providerName === 'thirdparty') return { label: 'Add credential', tone: 'setup' };
       if (providerName === 'openrouter' || providerName === 'deepseek' || providerName === 'minimax' || providerName === 'zai' || providerName === 'zaiteam' || providerName === 'volcengine' || providerName === 'kimi') return { label: 'Add API key', tone: 'setup' };
       if (providerName === 'grok') return { label: 'Run grok login', tone: 'setup' };
@@ -407,12 +440,7 @@
       tags.push(...limitProviderProvenanceTags(provenance));
       return tags;
     }
-    // Some capability hints restate the active setup status (e.g. antigravity's
-    // "App/CLI must be open" vs the notConfigured "Open app or CLI"). Drop the
-    // hint when it would duplicate the status tag already shown.
-    const statusLabel = status?.label;
     for (const label of limitProviderCapabilityTags(provider)) {
-      if (CAPABILITY_STATUS_DUPLICATES[label] === statusLabel) continue;
       tags.push({ label, kind: 'capability' });
     }
     return tags;
@@ -421,12 +449,14 @@
   return {
     antigravityQuotaWindow,
     apiKeyAccountStatus,
+    codexAdditionalQuotaDisplayName,
     isCodexLiveAccount,
     limitProviderCapabilityTags,
     limitProviderCompactWindowLabel,
     limitProviderCompactWindowPeriodLabel,
     limitProviderCompactWindows,
     limitProviderDisplayLabel,
+    limitProviderPlanDisplayLabel,
     limitProviderMainDeviceLabel,
     namedApiProfileStatus,
     limitProviderProvenance,

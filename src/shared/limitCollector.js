@@ -19,6 +19,7 @@ const { abortError } = require('./probeDeadline');
 const cursorAuth = require('./cursorAuth');
 const cursorProbe = require('./cursorProbe');
 const antigravityProbe = require('./antigravityProbe');
+const antigravityOAuth = require('./antigravityOAuth');
 const opencodeLimits = require('./opencodeLimits');
 const opencodeGoApi = require('./opencodeGoApi');
 const opencodeProfiles = require('./opencodeProfiles');
@@ -57,6 +58,7 @@ const kimiLimits = require('./kimiLimits');
 const { kimiToken, kimiWebToken, fetchKimiLimits } = kimiLimits;
 const workbuddyLimits = require('./workbuddyLimits');
 const traeLimits = require('./traeLimits');
+const zedLimits = require('./zedLimits');
 const {
   grokCredential,
   readAuthJson,
@@ -113,9 +115,9 @@ function parseBoolean(value, fallback = true) {
 }
 
 function parseLimitProviders(value) {
-  const isEmpty = value === undefined || value === null || value === ''
-    || (Array.isArray(value) && value.length === 0);
-  const source = isEmpty ? LIMIT_PROVIDER_IDS : value;
+  // Omission keeps the historical default; an explicitly empty setting means
+  // that no provider is enabled and must survive persistence/reload.
+  const source = value === undefined || value === null ? LIMIT_PROVIDER_IDS : value;
   const raw = Array.isArray(source) ? source : String(source).split(',');
   const seen = new Set();
   const providers = [];
@@ -2008,9 +2010,41 @@ function codexWindowKind(name, window) {
   // label below keeps the cadence explicit instead of presenting it as money.
   if (mins === 30 * 24 * 60) return 'billing';
   if (mins >= 7 * 24 * 60) return 'weekly';
+  if (mins >= 24 * 60) return 'daily';
   if (mins === 5 * 60) return 'session';
   if (String(name).toLowerCase() === 'secondary') return 'weekly';
   return 'session';
+}
+
+function codexAdditionalRateLimitWindows(payload = {}) {
+  const rateLimitsById = codexRateLimitsById(payload);
+  const direct = codexDirectRateLimits(payload);
+  // A named bucket is additive only when a canonical quota source exists. If
+  // an old RPC response has nothing but alternate buckets, codexRateLimitSnapshot
+  // may use their consensus as the main quota; publishing them again here would
+  // duplicate the same numbers as both ordinary and additional windows.
+  if (!Object.hasOwn(rateLimitsById, 'codex') && !hasCodexRateLimitWindows(direct)) return [];
+
+  const windows = [];
+  for (const [limitId, snapshot] of Object.entries(rateLimitsById)) {
+    if (limitId === 'codex' || !snapshot || typeof snapshot !== 'object') continue;
+    const limitName = String(snapshot.limitName ?? snapshot.limit_name ?? '').trim() || String(limitId).trim();
+    if (!limitName) continue;
+    for (const key of ['primary', 'secondary']) {
+      const window = snapshot[key];
+      if (!window) continue;
+      windows.push({
+        kind: codexWindowKind(key, window),
+        label: limitName,
+        limitId,
+        additional: true,
+        usedPercent: window.usedPercent ?? window.used_percent,
+        resetsAt: window.resetsAt ?? window.resets_at,
+        windowMinutes: window.windowDurationMins ?? window.window_duration_mins
+      });
+    }
+  }
+  return windows;
 }
 
 function hasCodexRateLimitWindows(snapshot) {
@@ -2410,6 +2444,7 @@ async function waitForCodexEmptyQuotaRetry(deps = {}) {
 
 function mapCodexRateLimitsToProvider(payload, meta = {}) {
   const rateLimits = codexRateLimitSnapshot(payload);
+  const canonicalLimitId = String(rateLimits.limitId ?? rateLimits.limit_id ?? 'codex').trim() || 'codex';
   const windows = [];
   for (const key of ['primary', 'secondary']) {
     const window = rateLimits[key];
@@ -2418,11 +2453,13 @@ function mapCodexRateLimitsToProvider(payload, meta = {}) {
     windows.push({
       kind,
       ...(kind === 'billing' ? { label: 'Monthly' } : {}),
+      limitId: canonicalLimitId,
       usedPercent: window.usedPercent ?? window.used_percent,
       resetsAt: window.resetsAt ?? window.resets_at,
       windowMinutes: window.windowDurationMins ?? window.window_duration_mins
     });
   }
+  windows.push(...codexAdditionalRateLimitWindows(payload));
   return normalizeLimitProvider({
     provider: 'codex',
     accountKey: meta.accountKey || '',
@@ -3314,55 +3351,122 @@ async function fetchCodexLimits(options = {}, deps = {}) {
   return providers;
 }
 
-async function fetchAntigravityLimits(_options = {}, deps = {}) {
+function mapAntigravitySnapshot(snapshot, { nowMs, source = 'rpc', account = null } = {}) {
+  const updatedAt = nowIso(nowMs ?? Date.now());
+  const accountEmail = String(snapshot?.accountEmail || account?.accountEmail || '').trim().toLowerCase();
+  const accountLabel = snapshot?.accountPlan ? antigravityPlanLabelFromParts(snapshot.accountPlan) : '';
+  const accountKeySeed = accountEmail || snapshot?.accountPlan || account?.id || 'default';
+  const windows = Array.isArray(snapshot?.windows)
+    ? snapshot.windows.map((window) => ({
+        kind: window.kind,
+        label: window.name,
+        usedPercent: typeof window.remainingFraction === 'number'
+          ? Math.max(0, Math.min(100, (1 - window.remainingFraction) * 100))
+          : null,
+        resetsAt: window.resetTime || null,
+        resetDescription: window.resetDescription || '',
+        windowMinutes: window.kind === 'session' ? 300 : window.kind === 'weekly' ? 10_080 : null,
+        showMeter: window.showMeter !== false
+      }))
+    : (snapshot?.pools || []).map((pool) => ({
+        kind: 'weekly',
+        label: pool.name,
+        usedPercent: Math.max(0, Math.min(100, (1 - pool.remainingFraction) * 100)),
+        resetsAt: pool.resetTime || null,
+        windowMinutes: null
+      }));
+  return normalizeLimitProvider({
+    provider: 'antigravity',
+    accountKey: accountEmail ? antigravityOAuth.accountKey(accountEmail) : hashKey('antigravity', accountKeySeed),
+    accountLabel,
+    accountEmail,
+    source,
+    sourceDetail: snapshot?.sourceDetail || '',
+    // OAuth can identify the account and plan even when Google withholds both
+    // quota payloads. Preserve that identity, but do not present an empty
+    // response as a live zero-usage quota.
+    status: windows.length > 0 ? 'ok' : 'unavailable',
+    updatedAt,
+    windows
+  });
+}
+
+function antigravityAccountError(account, error, nowMs) {
+  const verificationRequired = error?.status === 'verificationRequired';
+  return normalizeLimitProvider({
+    provider: 'antigravity',
+    accountKey: account?.accountKey || antigravityOAuth.accountKey(account?.accountEmail),
+    accountLabel: '',
+    accountEmail: account?.accountEmail || '',
+    source: 'oauth',
+    sourceDetail: 'oauth',
+    status: verificationRequired
+      ? 'unauthorized'
+      : error?.status === 'permissionDenied' ? 'unavailable' : providerStatusFromError(error),
+    ...(verificationRequired ? { actionRequired: 'accountVerification' } : {}),
+    updatedAt: nowIso(nowMs),
+    windows: []
+  });
+}
+
+async function fetchAntigravityLimits(options = {}, deps = {}) {
   const nowMs = (deps.now || Date.now)();
-  const updatedAt = nowIso(nowMs);
   const probeFn = deps.antigravityProbe || antigravityProbe.probe;
-  try {
-    const snapshot = await probeFn(deps);
-    const accountLabel = snapshot.accountPlan ? antigravityPlanLabelFromParts(snapshot.accountPlan) : '';
-    const accountKeySeed = snapshot.accountEmail || snapshot.accountPlan || 'default';
-    const windows = Array.isArray(snapshot.windows)
-      ? snapshot.windows.map((window) => ({
-          kind: window.kind,
-          label: window.name,
-          usedPercent: typeof window.remainingFraction === 'number'
-            ? Math.max(0, Math.min(100, (1 - window.remainingFraction) * 100))
-            : null,
-          resetsAt: window.resetTime || null,
-          resetDescription: window.resetDescription || '',
-          windowMinutes: window.kind === 'session' ? 300 : window.kind === 'weekly' ? 10_080 : null,
-          showMeter: window.showMeter !== false
-        }))
-      : (snapshot.pools || []).map((pool) => ({
-          kind: 'weekly',
-          label: pool.name,
-          usedPercent: Math.max(0, Math.min(100, (1 - pool.remainingFraction) * 100)),
-          resetsAt: pool.resetTime || null,
-          windowMinutes: null
-        }));
-    return normalizeLimitProvider({
-      provider: 'antigravity',
-      accountKey: hashKey('antigravity', accountKeySeed),
-      accountLabel,
-      accountEmail: snapshot.accountEmail || '',
-      source: 'rpc',
-      sourceDetail: snapshot.sourceDetail || '',
-      status: 'ok',
-      updatedAt,
-      windows
-    });
-  } catch (err) {
-    return normalizeLimitProvider({
-      provider: 'antigravity',
-      accountKey: '',
-      accountLabel: '',
-      source: 'rpc',
-      status: providerStatusFromError(err),
-      updatedAt,
-      windows: []
-    });
+  const scope = options.limitRefreshScope?.provider === 'antigravity' ? options.limitRefreshScope : null;
+  const accounts = antigravityOAuth.normalizeManagedAccounts(
+    options.antigravityManagedAccounts || deps.antigravityManagedAccounts,
+    { includeCredentials: true }
+  )
+    .filter((account) => account.enabled !== false)
+    .filter((account) => !scope
+      || (!scope.accountKey || scope.accountKey === account.accountKey)
+      && (!scope.accountEmail || scope.accountEmail === account.accountEmail));
+
+  if (accounts.length === 0 && !scope) {
+    try {
+      return mapAntigravitySnapshot(await probeFn(deps), { nowMs, source: 'rpc' });
+    } catch (error) {
+      return normalizeLimitProvider({
+        provider: 'antigravity',
+        accountKey: '',
+        accountLabel: '',
+        source: 'rpc',
+        status: providerStatusFromError(error),
+        updatedAt: nowIso(nowMs),
+        windows: []
+      });
+    }
   }
+
+  const localPromise = scope?.sourceDetail === 'oauth'
+    ? Promise.resolve(null)
+    : probeFn(deps).then(
+        (snapshot) => mapAntigravitySnapshot(snapshot, { nowMs, source: 'rpc' }),
+        () => null
+      );
+  const remotePromise = Promise.all(accounts.map(async (account) => {
+    try {
+      const snapshot = await antigravityOAuth.fetchRemoteSnapshot(account, {
+        ...deps,
+        collapsePools: antigravityProbe._collapsePools,
+        quotaSummaryWindows: antigravityProbe._quotaSummaryWindows,
+        onCredentialRenewed: (managedAccount, credentials, previous) => (
+          deps.onAntigravityCredentialsRenewed?.({ account: managedAccount, credentials, previous })
+        )
+      });
+      return mapAntigravitySnapshot(snapshot, { nowMs, source: 'oauth', account });
+    } catch (error) {
+      return antigravityAccountError(account, error, nowMs);
+    }
+  }));
+  const [local, remote] = await Promise.all([localPromise, remotePromise]);
+  const providers = [...remote];
+  if (local?.accountKey) {
+    const duplicateIndex = providers.findIndex((provider) => provider.accountKey === local.accountKey);
+    if (duplicateIndex >= 0) providers.splice(duplicateIndex, 1, local);
+    else providers.unshift(local);
+  }
+  return providers;
 }
 
 function openCodeWebIdentity(goWeb, zen, cookie) {
@@ -3836,6 +3940,7 @@ function providerFetchers(deps = {}) {
     workbuddy: (providerOptions, probeDeps) => workbuddyLimits.fetchWorkbuddyLimits(providerOptions, probeDeps),
     ollama: (providerOptions, probeDeps) => ollamaLimits.fetchOllamaLimits(providerOptions, probeDeps),
     kimi: (providerOptions, probeDeps) => kimiLimits.fetchKimiLimits(providerOptions, probeDeps),
+    zed: (providerOptions, probeDeps) => zedLimits.fetchZedLimits(providerOptions, probeDeps),
     thirdparty: (providerOptions, probeDeps) => thirdPartyLimits.fetchThirdPartyLimits(providerOptions, probeDeps),
     ...(deps.providerFetchers || {})
   };
@@ -4013,6 +4118,46 @@ function cursorBillingWindow(label, fields = {}) {
   };
 }
 
+function cursorOnDemandWindow(usage, resetsAt) {
+  const personalUsed = finiteNumber(usage.onDemandUsedUsd) ?? 0;
+  const personalLimit = finiteNumber(usage.onDemandLimitUsd);
+  const teamUsed = finiteNumber(usage.teamOnDemandUsedUsd) ?? 0;
+  const teamLimit = finiteNumber(usage.teamOnDemandLimitUsd);
+  let used;
+  let limit = null;
+  let remaining = null;
+
+  if (personalLimit !== null && personalLimit > 0) {
+    used = personalUsed;
+    limit = personalLimit;
+    remaining = finiteNumber(usage.onDemandRemainingUsd);
+  } else if (teamLimit !== null && teamLimit > 0) {
+    used = teamUsed;
+    limit = teamLimit;
+    remaining = finiteNumber(usage.teamOnDemandRemainingUsd);
+  } else if (personalUsed > 0) {
+    used = personalUsed;
+  } else if (teamUsed > 0) {
+    used = teamUsed;
+  } else {
+    return null;
+  }
+
+  if (limit !== null && remaining === null) remaining = Math.max(0, limit - used);
+  return cursorBillingWindow('On-demand spend', {
+    metric: 'spend',
+    currency: 'USD',
+    usedPercent: percentFromUsedLimit(used, limit),
+    used,
+    limit,
+    remaining,
+    resetsAt,
+    windowMinutes: null,
+    resetDescription: '',
+    showMeter: false
+  });
+}
+
 async function fetchCursorAccountLimits(account, deps = {}) {
   const nowMs = (deps.now || Date.now)();
   const updatedAt = new Date(nowMs).toISOString();
@@ -4048,71 +4193,50 @@ async function fetchCursorAccountLimits(account, deps = {}) {
   const hasRequestUsage = finiteNumber(usage.requestsUsed) !== null
     && finiteNumber(usage.requestsLimit) !== null
     && usage.requestsLimit > 0;
-  const totalPercent = hasRequestUsage
-    ? percentFromUsedLimit(usage.requestsUsed, usage.requestsLimit)
-    : usage.planPercent;
-  const windows = [
-    cursorBillingWindow('Total', {
-      usedPercent: totalPercent,
-      used: hasRequestUsage ? usage.requestsUsed : usage.planUsedUsd,
-      limit: hasRequestUsage ? usage.requestsLimit : usage.planLimitUsd,
-      remaining: hasRequestUsage
-        ? Math.max(0, usage.requestsLimit - usage.requestsUsed)
-        : usage.planRemainingUsd,
+  const windows = [];
+
+  if (hasRequestUsage) {
+    windows.push(cursorBillingWindow('Requests', {
+      usedPercent: percentFromUsedLimit(usage.requestsUsed, usage.requestsLimit),
+      used: usage.requestsUsed,
+      limit: usage.requestsLimit,
+      remaining: Math.max(0, usage.requestsLimit - usage.requestsUsed),
       resetsAt,
       windowMinutes: null,
       resetDescription: usage.membershipType ? `Cursor ${usage.membershipType}` : ''
-    })
-  ];
-
-  if (finiteNumber(usage.autoPercent) !== null) {
-    windows.push(cursorBillingWindow('Auto', {
+    }));
+  } else if (finiteNumber(usage.autoPercent) !== null || finiteNumber(usage.apiPercent) !== null) {
+    if (finiteNumber(usage.autoPercent) !== null) windows.push(cursorBillingWindow('Cursor Models', {
       usedPercent: usage.autoPercent,
       resetsAt,
       windowMinutes: null
     }));
-  }
-
-  if (finiteNumber(usage.apiPercent) !== null) {
-    windows.push(cursorBillingWindow('API', {
+    if (finiteNumber(usage.apiPercent) !== null) windows.push(cursorBillingWindow('Other Models', {
       usedPercent: usage.apiPercent,
+      resetsAt,
+      windowMinutes: null
+    }));
+  } else if (usage.hasOverallUsage && finiteNumber(usage.planPercent) !== null) {
+    windows.push(cursorBillingWindow('Overall', {
+      usedPercent: usage.planPercent,
+      used: usage.planUsedUsd,
+      limit: usage.planLimitUsd,
+      remaining: usage.planRemainingUsd,
       resetsAt,
       windowMinutes: null
     }));
   }
 
-  if (usage.hasOnDemandUsage || finiteNumber(usage.onDemandLimitUsd) !== null || (finiteNumber(usage.onDemandUsedUsd) !== null && usage.onDemandUsedUsd > 0)) {
-    const remaining = finiteNumber(usage.onDemandRemainingUsd)
-      ?? (finiteNumber(usage.onDemandLimitUsd) !== null
-        ? Math.max(0, usage.onDemandLimitUsd - (finiteNumber(usage.onDemandUsedUsd) || 0))
-        : null);
-    windows.push(cursorBillingWindow('Credits', {
-      usedPercent: finiteNumber(usage.onDemandPercent) ?? percentFromUsedLimit(usage.onDemandUsedUsd, usage.onDemandLimitUsd),
-      used: usage.onDemandUsedUsd,
-      limit: usage.onDemandLimitUsd,
-      remaining,
-      resetsAt: null,
-      windowMinutes: null,
+  if (usage.grokBot?.hasNonZeroIncludedLimit === true && finiteNumber(usage.grokBot.usedPercent) !== null) {
+    windows.push({
+      kind: 'weekly',
+      label: 'Grok Bot',
+      usedPercent: usage.grokBot.usedPercent,
+      resetsAt: usage.grokBot.resetsAt || null,
+      windowMinutes: finiteNumber(usage.grokBot.windowMinutes),
       resetDescription: '',
-      showMeter: false
-    }));
-  }
-
-  if (usage.hasTeamOnDemandUsage || finiteNumber(usage.teamOnDemandLimitUsd) !== null || (finiteNumber(usage.teamOnDemandUsedUsd) !== null && usage.teamOnDemandUsedUsd > 0)) {
-    const remaining = finiteNumber(usage.teamOnDemandRemainingUsd)
-      ?? (finiteNumber(usage.teamOnDemandLimitUsd) !== null
-        ? Math.max(0, usage.teamOnDemandLimitUsd - (finiteNumber(usage.teamOnDemandUsedUsd) || 0))
-        : null);
-    windows.push(cursorBillingWindow('Team credits', {
-      usedPercent: finiteNumber(usage.teamOnDemandPercent) ?? percentFromUsedLimit(usage.teamOnDemandUsedUsd, usage.teamOnDemandLimitUsd),
-      used: usage.teamOnDemandUsedUsd,
-      limit: usage.teamOnDemandLimitUsd,
-      remaining,
-      resetsAt: null,
-      windowMinutes: null,
-      resetDescription: '',
-      showMeter: false
-    }));
+      showMeter: true
+    });
   }
 
   if (usage.hasTeamPooledUsage || finiteNumber(usage.teamPooledLimitUsd) !== null || (finiteNumber(usage.teamPooledUsedUsd) !== null && usage.teamPooledUsedUsd > 0)) {
@@ -4130,6 +4254,9 @@ async function fetchCursorAccountLimits(account, deps = {}) {
       resetDescription: 'Shared team usage pool.'
     }));
   }
+
+  const onDemandWindow = cursorOnDemandWindow(usage, resetsAt);
+  if (onDemandWindow) windows.push(onDemandWindow);
 
   return {
     provider: 'cursor',
@@ -4230,6 +4357,9 @@ module.exports = {
   kimiToken,
   kimiWebToken,
   fetchKimiLimits,
+  zedCookie: zedLimits.zedCookie,
+  normalizeZedCookieHeader: zedLimits.normalizeZedCookieHeader,
+  fetchZedLimits: zedLimits.fetchZedLimits,
   mapClaudeCliUsageToProvider,
   mapClaudeUsageToProvider,
   mapCodexRateLimitsToProvider,

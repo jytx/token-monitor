@@ -169,6 +169,11 @@ function buildProviderBalance(provider) {
   return { amount, currency };
 }
 
+function isCanonicalCodexWindow(providerId, window) {
+  if (providerId !== 'codex') return true;
+  return window?.additional !== true;
+}
+
 function buildQuota(limits) {
   const providers = Array.isArray(limits?.providers) ? limits.providers : [];
   const candidates = [];
@@ -177,7 +182,11 @@ function buildQuota(limits) {
     const providerId = String(provider.provider || '').trim().toLowerCase();
     if (!KNOWN_LIMIT_PROVIDERS.has(providerId)) continue;
     const windows = Array.isArray(provider.windows)
-      ? provider.windows.map(buildLimitWindow).filter(Boolean).slice(0, 2)
+      ? provider.windows
+        .filter((window) => isCanonicalCodexWindow(providerId, window))
+        .map(buildLimitWindow)
+        .filter(Boolean)
+        .slice(0, 2)
       : [];
     const balance = buildProviderBalance(provider);
     const accountKey = String(provider.accountKey || '').trim();
@@ -280,7 +289,8 @@ const PROVIDER_LABELS = Object.freeze({
   thirdparty: 'Third-party APIs',
   volcengine: 'Volcengine',
   zai: 'GLM',
-  zaiteam: 'GLM Team'
+  zaiteam: 'GLM Team',
+  zed: 'Zed'
 });
 
 function providerLabel(provider) {

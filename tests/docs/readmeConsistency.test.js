@@ -69,6 +69,7 @@ const supportedToolOrder = [
   'Reasonix',
   'DeepSeek / DeepSeek Harness',
   'Cherry Studio',
+  'LM Studio',
   'OpenRouter',
   'Minimax',
   'Volcengine',
@@ -104,6 +105,7 @@ const supportedToolIdOrder = [
   'reasonix',
   'deepseek',
   'cherrystudio',
+  'lmstudio',
   'openrouter',
   'minimax',
   'volcengine',
@@ -164,6 +166,22 @@ test('localized READMEs list the same supported tools', () => {
     const text = read(file);
     assert.deepEqual(supportedToolCounts(text, file), baseline, file);
     assert.deepEqual(supportedToolIds(text, file), supportedToolIdOrder, file);
+  }
+});
+
+test('localized READMEs disclose the LM Studio server-log tracking boundary', () => {
+  for (const file of localizedReadmes) {
+    const text = read(file);
+    const rowEnd = text.indexOf('\n', text.indexOf('tools-icon/lmstudio.png'));
+    const detailsStart = text.indexOf('<details>', rowEnd);
+    const detailsEnd = text.indexOf('</details>', detailsStart);
+    const beforeDetails = text.slice(rowEnd, detailsStart);
+    const notes = text.slice(detailsStart, detailsEnd);
+
+    assert.doesNotMatch(beforeDetails, /\/api\/v1\/chat/, file);
+    assert.match(notes, /\/v1\/chat\/completions/, file);
+    assert.match(notes, /\/v1\/responses/, file);
+    assert.match(notes, /\/api\/v1\/chat/, file);
   }
 });
 

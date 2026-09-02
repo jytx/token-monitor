@@ -177,9 +177,19 @@
       : limitFillPercent(window?.remainingPercent, window?.usedPercent, false);
   }
 
+  function isCanonicalCodexWindow(provider, window) {
+    if (normalizedProviderId(provider?.provider) !== 'codex') return true;
+    return window?.additional !== true;
+  }
+
   function meteredWindows(provider, kind = '') {
     return (provider?.windows || []).filter((window) => {
-      if (!window || window.showMeter === false || (kind && window.kind !== kind)) return false;
+      if (
+        !window
+        || window.showMeter === false
+        || (kind && window.kind !== kind)
+        || !isCanonicalCodexWindow(provider, window)
+      ) return false;
       return remainingPercent(window, provider) !== null;
     });
   }

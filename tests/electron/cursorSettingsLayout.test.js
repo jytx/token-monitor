@@ -732,19 +732,19 @@ test('API key account entries share styling and Copilot uses the folded token en
   const css = readRendererFile('styles.css');
 
   const animationBody = functionBodyBeforeMarker(app, 'initSettingsAnimationWrappers', '\ninitSettingsAnimationWrappers();');
-  assert.match(animationBody, /'#deepseekManualPanel',\n\s*'#minimaxManualPanel',\n\s*'#zaiManualPanel',\n\s*'#zaiteamManualPanel',\n\s*'#volcengineManualPanel',\n\s*'#qoderManualPanel',\n\s*'#traeManualPanel',\n\s*'#commandcodeManualPanel',\n\s*'#kimiManualPanel'/);
+  assert.match(animationBody, /'#deepseekManualPanel',\n\s*'#minimaxManualPanel',\n\s*'#zaiManualPanel',\n\s*'#zaiteamManualPanel',\n\s*'#volcengineManualPanel',\n\s*'#qoderManualPanel',\n\s*'#traeManualPanel',\n\s*'#zedManualPanel',\n\s*'#commandcodeManualPanel',\n\s*'#kimiManualPanel'/);
   assert.doesNotMatch(animationBody, /'#mimoManualPanel'/);
   assert.doesNotMatch(animationBody, /'#copilotManualPanel'/);
 
   assert.match(css, /#deepseekManualPanel\.hidden,\n#minimaxManualPanel\.hidden,/);
-  assert.match(css, /#minimaxManualPanel\.hidden,\n#zaiManualPanel\.hidden,\n#zaiteamManualPanel\.hidden,\n#volcengineManualPanel\.hidden,\n#qoderManualPanel\.hidden,\n#traeManualPanel\.hidden,\n#commandcodeManualPanel\.hidden,\n#ollamaManualPanel\.hidden,\n#mimoManualPanel\.hidden,\n#kimiManualPanel\.hidden,\n#copilotManualPanel\.hidden,/);
+  assert.match(css, /#minimaxManualPanel\.hidden,\n#zaiManualPanel\.hidden,\n#zaiteamManualPanel\.hidden,\n#volcengineManualPanel\.hidden,\n#qoderManualPanel\.hidden,\n#traeManualPanel\.hidden,\n#zedManualPanel\.hidden,\n#commandcodeManualPanel\.hidden,\n#ollamaManualPanel\.hidden,\n#mimoManualPanel\.hidden,\n#kimiManualPanel\.hidden,\n#copilotManualPanel\.hidden,/);
   assert.match(css, /#copilotManualPanel\.hidden,\n#copilotManualDetails\.hidden,/);
-  assert.match(css, /#deepseekErrorMessage\.hidden,\n#minimaxErrorMessage\.hidden,\n#zaiErrorMessage\.hidden,\n#zaiteamErrorMessage\.hidden,\n#volcengineErrorMessage\.hidden,\n#qoderErrorMessage\.hidden,\n#traeErrorMessage\.hidden,\n#commandcodeErrorMessage\.hidden,\n#ollamaErrorMessage\.hidden,\n#kimiErrorMessage\.hidden,\n#copilotErrorMessage\.hidden,/);
-  assert.match(css, /#deepseekManualPanel,\n#minimaxManualPanel,\n#zaiManualPanel,\n#zaiteamManualPanel,\n#volcengineManualPanel,\n#qoderManualPanel,\n#traeManualPanel,\n#commandcodeManualPanel,\n#ollamaManualPanel,\n#mimoManualPanel,\n#kimiManualPanel,\n#copilotManualPanel\s*\{\n\s*min-width: 0;/);
-  assert.match(css, /#deepseekManualPanel > \.accordion-animation-inner,\n#minimaxManualPanel > \.accordion-animation-inner,\n#zaiManualPanel > \.accordion-animation-inner,\n#zaiteamManualPanel > \.accordion-animation-inner,\n#volcengineManualPanel > \.accordion-animation-inner,\n#qoderManualPanel > \.accordion-animation-inner,\n#traeManualPanel > \.accordion-animation-inner,\n#commandcodeManualPanel > \.accordion-animation-inner,\n#ollamaManualPanel > \.accordion-animation-inner,\n#mimoManualPanel > \.accordion-animation-inner,\n#kimiManualPanel > \.accordion-animation-inner\s*\{\n\s*display: grid;/);
+  assert.match(css, /#deepseekErrorMessage\.hidden,\n#minimaxErrorMessage\.hidden,\n#zaiErrorMessage\.hidden,\n#zaiteamErrorMessage\.hidden,\n#volcengineErrorMessage\.hidden,\n#qoderErrorMessage\.hidden,\n#traeErrorMessage\.hidden,\n#zedErrorMessage\.hidden,\n#commandcodeErrorMessage\.hidden,\n#ollamaErrorMessage\.hidden,\n#kimiErrorMessage\.hidden,\n#copilotErrorMessage\.hidden,/);
+  assert.match(css, /#deepseekManualPanel,\n#minimaxManualPanel,\n#zaiManualPanel,\n#zaiteamManualPanel,\n#volcengineManualPanel,\n#qoderManualPanel,\n#traeManualPanel,\n#zedManualPanel,\n#commandcodeManualPanel,\n#ollamaManualPanel,\n#mimoManualPanel,\n#kimiManualPanel,\n#copilotManualPanel\s*\{\n\s*min-width: 0;/);
+  assert.match(css, /#deepseekManualPanel > \.accordion-animation-inner,\n#minimaxManualPanel > \.accordion-animation-inner,\n#zaiManualPanel > \.accordion-animation-inner,\n#zaiteamManualPanel > \.accordion-animation-inner,\n#volcengineManualPanel > \.accordion-animation-inner,\n#qoderManualPanel > \.accordion-animation-inner,\n#traeManualPanel > \.accordion-animation-inner,\n#zedManualPanel > \.accordion-animation-inner,\n#commandcodeManualPanel > \.accordion-animation-inner,\n#ollamaManualPanel > \.accordion-animation-inner,\n#mimoManualPanel > \.accordion-animation-inner,\n#kimiManualPanel > \.accordion-animation-inner\s*\{\n\s*display: grid;/);
   assert.doesNotMatch(css, /#copilotManualPanel > \.accordion-animation-inner/);
-  assert.match(css, /#deepseekManualPanel input,\n#minimaxManualPanel input,\n#zaiManualPanel input,\n#zaiteamManualPanel input,\n#zaiApiRegionInput,\n#volcengineManualPanel input,\n#qoderManualPanel textarea,\n#qoderManualPanel select,\n#traeManualPanel input,\n#commandcodeManualPanel textarea,\n#ollamaManualPanel textarea,\n#mimoManualPanel input,\n#mimoManualPanel textarea,\n#kimiManualPanel input,\n#kimiManualPanel textarea,\n#copilotManualDetails input\s*\{[\s\S]*?font-size: 12px;/);
-  assert.match(css, /#deepseekManualPanel input,\n#minimaxManualPanel input,\n#zaiManualPanel input,\n#zaiteamManualPanel input,\n#volcengineManualPanel input,\n#qoderManualPanel textarea,\n#traeManualPanel input,\n#commandcodeManualPanel textarea,\n#ollamaManualPanel textarea,\n#mimoManualPanel input,\n#mimoManualPanel textarea,\n#kimiManualPanel input,\n#kimiManualPanel textarea,\n#copilotManualDetails input\s*\{[\s\S]*?font-family: monospace;/);
+  assert.match(css, /#deepseekManualPanel input,\n#minimaxManualPanel input,\n#zaiManualPanel input,\n#zaiteamManualPanel input,\n#zaiApiRegionInput,\n#volcengineManualPanel input,\n#qoderManualPanel textarea,\n#qoderManualPanel select,\n#traeManualPanel input,\n#zedManualPanel textarea,\n#commandcodeManualPanel textarea,\n#ollamaManualPanel textarea,\n#mimoManualPanel input,\n#mimoManualPanel textarea,\n#kimiManualPanel input,\n#kimiManualPanel textarea,\n#copilotManualDetails input\s*\{[\s\S]*?font-size: 12px;/);
+  assert.match(css, /#deepseekManualPanel input,\n#minimaxManualPanel input,\n#zaiManualPanel input,\n#zaiteamManualPanel input,\n#volcengineManualPanel input,\n#qoderManualPanel textarea,\n#traeManualPanel input,\n#zedManualPanel textarea,\n#commandcodeManualPanel textarea,\n#ollamaManualPanel textarea,\n#mimoManualPanel input,\n#mimoManualPanel textarea,\n#kimiManualPanel input,\n#kimiManualPanel textarea,\n#copilotManualDetails input\s*\{[\s\S]*?font-family: monospace;/);
 
   assert.match(css, /\.thirdparty-field :is\(input, select\)\s*\{[\s\S]*?font-size: 12px;/);
 });
@@ -799,12 +799,15 @@ test('Z.ai, Volcengine, Qoder, Trae, and Ollama account panels are exposed in se
   assert.match(html, /<div id="zaiAccountGroup"[\s\S]*?<div id="zaiAccountList" class="managed-account-list">[\s\S]*?<select id="zaiApiRegionInput">[\s\S]*?<input id="zaiApiKeyInput" type="password"[\s\S]*?<input id="zaiAccountLabelInput"[\s\S]*?<button id="zaiSaveAccountButton"[\s\S]*data-i18n="settings\.zai\.saveAccount">/);
   assert.match(html, /<div id="volcengineAccountGroup"[\s\S]*?data-i18n="settings\.volcengine\.accessKeyId">Access key ID \/ API key[\s\S]*?<input id="volcengineAccessKeyInput" type="password"[\s\S]*placeholder="AKLT\.\.\. or ark-\.\.\."[\s\S]*?<input id="volcengineSecretAccessKeyInput" type="password"[\s\S]*?<input id="volcengineRegionInput" type="text"[\s\S]*?<button id="volcengineCredentialsSubmit"[\s\S]*data-i18n="settings\.volcengine\.saveCredentials">/);
   assert.match(html, /<div id="qoderAccountGroup"[\s\S]*?<select id="qoderSiteInput">[\s\S]*?<textarea id="qoderCookieInput"[\s\S]*?<button id="qoderCookieSubmit"[\s\S]*data-i18n="settings\.qoder\.saveCookie">/);
-  assert.match(html, /<div id="traeAccountGroup"[\s\S]*?<input id="traeTokenInput" type="password"[\s\S]*?data-i18n-placeholder="settings\.trae\.tokenPlaceholder"[\s\S]*?<input id="traeDeviceIdInput" type="text"[\s\S]*?data-i18n-placeholder="settings\.trae\.deviceIdPlaceholder"[\s\S]*?<button id="traeTokenSubmit"[\s\S]*data-i18n="settings\.trae\.saveCredentials">/);
+  assert.match(html, /<div id="traeAccountGroup"[\s\S]*?<input id="traeTokenInput" type="password"[\s\S]*?<input id="traeDeviceIdInput" type="text"[\s\S]*?data-i18n-placeholder="settings\.trae\.deviceIdPlaceholder"[\s\S]*?<button id="traeTokenSubmit"[\s\S]*data-i18n="settings\.trae\.saveCredentials">/);
   const traeDetails = html.match(/<div id="traeSettingsDetails"[\s\S]*?<div id="traeErrorMessage" class="settings-note error hidden"><\/div>/)?.[0] || '';
   assert.match(traeDetails, /<strong>1\.<\/strong> <span data-i18n="settings\.trae\.step1">/);
-  assert.match(traeDetails, /<strong>2\.<\/strong> <span data-i18n="settings\.trae\.step2">/);
-  assert.match(traeDetails, /<strong>3\.<\/strong> <span data-i18n="settings\.trae\.step3">/);
+  assert.match(traeDetails, /<strong>2\.<\/strong> <span data-i18n="settings\.trae\.step2Before">[\s\S]*?> www\.trae\.cn\.<br>/);
+  assert.match(traeDetails, /<strong>3\.<\/strong> <span data-i18n="settings\.trae\.step3Before">[\s\S]*?<code>Cloud-IDE-Token<\/code>[\s\S]*?<span data-i18n="settings\.trae\.step3After">/);
   assert.match(traeDetails, /<strong>4\.<\/strong> <span data-i18n="settings\.trae\.step4">/);
+  assert.match(traeDetails, /id="traeTokenInput"[^>]*placeholder="Cloud-IDE-Token"/);
+  assert.match(traeDetails, /id="traeDeviceIdInput"[^>]*placeholder="X-Device-Id"[^>]*data-i18n-placeholder="settings\.trae\.deviceIdPlaceholder"/);
+  assert.match(traeDetails, /data-i18n="settings\.trae\.deviceIdNote">[^<]*ide_user_ent_usage[^<]*X-Device-Id/);
   assert.doesNotMatch(traeDetails, /settings\.trae\.note/);
   assert.match(html, /<div id="ollamaAccountGroup"[\s\S]*?<textarea id="ollamaCookieInput"[\s\S]*?<button id="ollamaCookieSubmit"[\s\S]*data-i18n="settings\.ollama\.saveCookie">/);
   const ollamaDetails = html.match(/<div id="ollamaSettingsDetails"[\s\S]*?<div id="ollamaErrorMessage" class="settings-note error hidden"><\/div>/)?.[0] || '';
@@ -876,6 +879,56 @@ test('Z.ai, Volcengine, Qoder, Trae, and Ollama account panels are exposed in se
   assert.match(zaiUrlBody, /https:\/\/z\.ai\/manage-apikey\/coding-plan\/personal\/my-plan/);
   const volcengineUrlBody = functionBody(app, 'volcenginePlatformUrl', 'qoderPlatformUrl');
   assert.match(volcengineUrlBody, /console\.volcengine\.com\/ark\/region:ark\+cn-beijing\/openManagement/);
+});
+
+test('Zed account panel follows the manual browser Cookie flow without exposing credentials', () => {
+  const html = readRendererFile('index.html');
+  const details = html.match(/<div id="zedSettingsDetails"[\s\S]*?<div id="zedErrorMessage"[^>]*><\/div>/)?.[0] || '';
+  assert.match(details, /id="zedOpenBrowser"/);
+  assert.match(details, /<textarea id="zedCookieInput" rows="3" autocomplete="off"/);
+  assert.doesNotMatch(details, /<label for="zedCookieInput"|cloud\.zed\.dev\/frontend\/billing\/usage|AI Usage/);
+  assert.match(details, /id="zedCookieSubmit"/);
+  assert.doesNotMatch(details, /zedUserIdInput|zedAccessTokenInput|zedServerUrlInput|zedAccountList/);
+
+  const app = readRendererFile('app.js');
+  const connectionDetailMap = app.slice(
+    app.indexOf('const LIMIT_PROVIDER_CONNECTION_DETAIL_KEYS = {'),
+    app.indexOf('const TRAY_ICON_VARIANTS = [')
+  );
+  assert.doesNotMatch(connectionDetailMap, /\bzed:/);
+  const setupBody = functionBodyBeforeMarker(app, 'setupCursorAccountUI', '\nsetupCursorAccountUI();');
+  assert.match(setupBody, /window\.tokenMonitor\.openExternal\(zedPlatformUrl\(\)\)/);
+  assert.match(setupBody, /saveSettings\(\{[\s\S]*zedCookie: input\.value/);
+  assert.match(setupBody, /limitProviderSelectionIncluding\('zed'\)/);
+  assert.doesNotMatch(setupBody, /window\.tokenMonitor\.zed|zedUserId|zedAccessToken|zedServerUrl/);
+
+  const preload = fs.readFileSync(path.join(rendererDir, '..', 'preload.js'), 'utf8');
+  assert.doesNotMatch(preload, /zed:addAccount|zed:accounts|zed:cancelLogin/);
+  const main = fs.readFileSync(path.join(rendererDir, '..', 'main.js'), 'utf8');
+  const settingsForRenderer = functionBody(main, 'settingsForRenderer', 'pushSettingsToRenderer');
+  assert.match(settingsForRenderer, /zedCookie: settings\?\.zedCookie \? 'set' : ''/);
+  assert.match(settingsForRenderer, /zedCookieConfigured: Boolean\(currentZedCookie\(\)\)/);
+  assert.doesNotMatch(settingsForRenderer, /zedCookie:\s*settings\?\.zedCookie,/);
+  assert.doesNotMatch(main, /runZedOAuthLogin|readZedCredential|ipcMain\.handle\('zed:addAccount'/);
+
+  const zedUrlBody = functionBody(app, 'zedPlatformUrl', 'ollamaValidationError');
+  assert.match(zedUrlBody, /https:\/\/dashboard\.zed\.dev\//);
+  const css = readRendererFile('styles.css');
+  assert.match(css, /#zedManualPanel\.hidden,/);
+  assert.match(css, /#zedManualPanel textarea,/);
+  assert.match(css, /#zedErrorMessage\.hidden,/);
+
+  const i18n = readRendererFile('i18n.js');
+  assert.doesNotMatch(i18n, /settings\.limits\.connection\.zed/);
+  for (const key of [
+    'settings.zed.title',
+    'settings.zed.openBrowser',
+    'settings.zed.step1',
+    'settings.zed.saveCookie',
+    'settings.zed.statusInvalid'
+  ]) {
+    assert.equal(i18n.split(`'${key}':`).length - 1, 5, `${key} should exist in all five locales`);
+  }
 });
 
 test('Command Code account panel saves a cookie, enables its provider, and opens the allowlisted usage page', () => {
@@ -1450,12 +1503,23 @@ test('sync upload interval setting is exposed in the Multi-device Sync panel', (
 // their local drafts until the explicit Hub Save commits them.
 function fakeHubControl(value = '') {
   const listeners = new Map();
+  const attributes = new Map();
   return {
     value,
+    disabled: false,
     addEventListener(type, listener) {
       const current = listeners.get(type) || [];
       current.push(listener);
       listeners.set(type, current);
+    },
+    setAttribute(name, value) {
+      attributes.set(name, String(value));
+    },
+    removeAttribute(name) {
+      attributes.delete(name);
+    },
+    getAttribute(name) {
+      return attributes.get(name) ?? null;
     },
     async dispatch(type) {
       for (const listener of listeners.get(type) || []) await listener({ target: this });
@@ -1494,6 +1558,276 @@ function loadHubSettingsWiring(els, context) {
   );
   return vmContext;
 }
+
+test('Hub Save disables for clean and reverted drafts', async () => {
+  const els = {
+    saveSettingsButton: fakeHubControl(),
+    hubUrlInput: fakeHubControl(),
+    secretInput: fakeHubControl(),
+    deviceIdInput: fakeHubControl(),
+    syncUploadIntervalInput: fakeHubControl('0'),
+    showLimitUsedInputs: []
+  };
+  const state = {
+    settings: {
+      hubMode: 'client',
+      hubUrl: 'https://saved.example',
+      secret: 'saved-secret',
+      deviceId: 'saved-device',
+      syncUploadIntervalMs: 0
+    }
+  };
+  const patches = [];
+  let vmContext;
+  vmContext = loadHubSettingsWiring(els, {
+    state,
+    saveSettings: async (patch) => {
+      patches.push({ ...patch });
+      Object.assign(state.settings, patch);
+    },
+    refreshHubInfo: async () => {},
+    refreshHubBuildStatus: async () => {},
+    refreshStats: async () => {}
+  });
+  vmContext.syncHubDraftFields();
+
+  assert.equal(els.saveSettingsButton.disabled, true);
+  els.hubUrlInput.value = '  https://saved.example  ';
+  await els.hubUrlInput.dispatch('input');
+  assert.equal(els.saveSettingsButton.disabled, true);
+
+  els.hubUrlInput.value = 'https://draft.example';
+  await els.hubUrlInput.dispatch('input');
+  assert.equal(els.saveSettingsButton.disabled, false);
+
+  els.hubUrlInput.value = 'https://saved.example';
+  await els.hubUrlInput.dispatch('input');
+  assert.equal(els.saveSettingsButton.disabled, true);
+  await els.saveSettingsButton.dispatch('click');
+  assert.deepEqual(patches, []);
+
+  state.settings.hubUrl = 'https://pushed.example';
+  vmContext.syncHubDraftFields();
+  assert.equal(els.hubUrlInput.value, 'https://pushed.example');
+});
+
+test('Hub Save exposes busy state and ignores repeated clicks', async () => {
+  const els = {
+    saveSettingsButton: fakeHubControl(),
+    hubUrlInput: fakeHubControl(),
+    secretInput: fakeHubControl(),
+    deviceIdInput: fakeHubControl(),
+    syncUploadIntervalInput: fakeHubControl('0'),
+    showLimitUsedInputs: []
+  };
+  const state = {
+    settings: {
+      hubMode: 'client',
+      hubUrl: 'https://saved.example',
+      secret: 'saved-secret',
+      deviceId: 'saved-device',
+      syncUploadIntervalMs: 0
+    }
+  };
+  const patches = [];
+  let releaseSave;
+  let resolveSaveStarted;
+  const saveGate = new Promise((resolve) => { releaseSave = resolve; });
+  const saveStarted = new Promise((resolve) => { resolveSaveStarted = resolve; });
+  let vmContext;
+  vmContext = loadHubSettingsWiring(els, {
+    state,
+    saveSettings: async (patch) => {
+      patches.push({ ...patch });
+      resolveSaveStarted();
+      await saveGate;
+      Object.assign(state.settings, patch);
+    },
+    refreshHubInfo: async () => {},
+    refreshHubBuildStatus: async () => {},
+    refreshStats: async () => {}
+  });
+  vmContext.syncHubDraftFields();
+
+  els.hubUrlInput.value = 'https://draft.example';
+  await els.hubUrlInput.dispatch('input');
+  const savePromise = els.saveSettingsButton.dispatch('click');
+  await saveStarted;
+
+  assert.equal(els.saveSettingsButton.disabled, true);
+  assert.equal(els.saveSettingsButton.getAttribute('aria-busy'), 'true');
+  await els.saveSettingsButton.dispatch('click');
+  assert.deepEqual(patches, [{
+    hubUrl: 'https://draft.example',
+    secret: 'saved-secret',
+    deviceId: 'saved-device'
+  }]);
+
+  releaseSave();
+  await savePromise;
+  assert.equal(els.saveSettingsButton.disabled, true);
+  assert.equal(els.saveSettingsButton.getAttribute('aria-busy'), null);
+});
+
+test('Hub Save re-enables a failed draft after clearing busy state', async () => {
+  const els = {
+    saveSettingsButton: fakeHubControl(),
+    hubUrlInput: fakeHubControl(),
+    secretInput: fakeHubControl(),
+    deviceIdInput: fakeHubControl(),
+    syncUploadIntervalInput: fakeHubControl('0'),
+    showLimitUsedInputs: []
+  };
+  const state = {
+    settings: {
+      hubMode: 'client',
+      hubUrl: 'https://saved.example',
+      secret: 'saved-secret',
+      deviceId: 'saved-device',
+      syncUploadIntervalMs: 0
+    }
+  };
+  let vmContext;
+  vmContext = loadHubSettingsWiring(els, {
+    state,
+    saveSettings: async () => { throw new Error('save failed'); },
+    refreshHubInfo: async () => {},
+    refreshHubBuildStatus: async () => {},
+    refreshStats: async () => {}
+  });
+  vmContext.syncHubDraftFields();
+
+  els.hubUrlInput.value = 'https://draft.example';
+  await els.hubUrlInput.dispatch('input');
+  await assert.rejects(els.saveSettingsButton.dispatch('click'), /save failed/);
+
+  assert.equal(els.saveSettingsButton.disabled, false);
+  assert.equal(els.saveSettingsButton.getAttribute('aria-busy'), null);
+  assert.equal(els.hubUrlInput.value, 'https://draft.example');
+});
+
+test('Hub Save compares Host Hub ports with main-process normalization', async () => {
+  const classList = { toggle() {} };
+  const els = {
+    saveSettingsButton: fakeHubControl(),
+    hubModeOptions: { querySelectorAll: () => [] },
+    hubClientFields: { classList },
+    hubHostFields: { classList },
+    hubPortInput: fakeHubControl(),
+    hubSecretInput: fakeHubControl(),
+    hubUrlInput: fakeHubControl(),
+    secretInput: fakeHubControl(),
+    deviceIdInput: fakeHubControl('saved-device'),
+    syncUploadIntervalInput: fakeHubControl('0'),
+    showLimitUsedInputs: []
+  };
+  const state = {
+    settings: {
+      hubMode: 'host',
+      hubHostPort: 17321,
+      hubHostSecret: 'host-secret',
+      hubUrl: '',
+      secret: '',
+      deviceId: 'saved-device',
+      syncUploadIntervalMs: 0
+    }
+  };
+  let vmContext;
+  vmContext = loadHubSettingsWiring(els, {
+    state,
+    saveSettings: async () => {},
+    refreshHubInfo: async () => {},
+    refreshHubBuildStatus: async () => {},
+    refreshStats: async () => {}
+  });
+  vmContext.syncHubDraftFields();
+
+  assert.equal(els.saveSettingsButton.disabled, true);
+  els.hubPortInput.value = '017321';
+  await els.hubPortInput.dispatch('input');
+  assert.equal(els.saveSettingsButton.disabled, true);
+
+  els.hubPortInput.value = '17321.9';
+  await els.hubPortInput.dispatch('input');
+  assert.equal(els.saveSettingsButton.disabled, true);
+
+  state.settings.hubHostPort = 18000;
+  vmContext.syncHubDraftFields();
+  assert.equal(els.hubPortInput.value, '18000');
+
+  els.hubPortInput.value = '70000';
+  await els.hubPortInput.dispatch('input');
+  assert.equal(els.saveSettingsButton.disabled, true);
+
+  els.hubPortInput.value = '17321.9';
+  await els.hubPortInput.dispatch('input');
+  assert.equal(els.saveSettingsButton.disabled, false);
+});
+
+test('Host Hub invalid ports preserve the persisted port when another field saves', async () => {
+  const classList = { toggle() {} };
+  const els = {
+    saveSettingsButton: fakeHubControl(),
+    hubModeOptions: { querySelectorAll: () => [] },
+    hubClientFields: { classList },
+    hubHostFields: { classList },
+    hubPortInput: fakeHubControl(),
+    hubSecretInput: fakeHubControl(),
+    hubUrlInput: fakeHubControl(),
+    secretInput: fakeHubControl(),
+    deviceIdInput: fakeHubControl(),
+    syncUploadIntervalInput: fakeHubControl('0'),
+    showLimitUsedInputs: []
+  };
+  const state = {
+    settings: {
+      hubMode: 'host',
+      hubHostPort: 18000,
+      hubHostSecret: 'host-secret',
+      hubUrl: '',
+      secret: '',
+      deviceId: 'saved-device',
+      syncUploadIntervalMs: 0
+    }
+  };
+  const patches = [];
+  let vmContext;
+  vmContext = loadHubSettingsWiring(els, {
+    state,
+    saveSettings: async (patch) => {
+      patches.push({ ...patch });
+      Object.assign(state.settings, patch);
+    },
+    refreshHubInfo: async () => {},
+    refreshHubBuildStatus: async () => {},
+    refreshStats: async () => {}
+  });
+  vmContext.syncHubDraftFields();
+
+  els.hubPortInput.value = '70000';
+  await els.hubPortInput.dispatch('input');
+  assert.equal(els.saveSettingsButton.disabled, true);
+
+  els.deviceIdInput.value = 'draft-device';
+  await els.deviceIdInput.dispatch('input');
+  assert.equal(els.saveSettingsButton.disabled, false);
+  await els.saveSettingsButton.dispatch('click');
+
+  assert.deepEqual(patches, [{
+    hubUrl: '',
+    secret: '',
+    deviceId: 'draft-device',
+    hubHostPort: 18000
+  }]);
+  assert.equal(els.hubPortInput.value, '18000');
+
+  els.hubPortInput.value = '17321.9';
+  await els.hubPortInput.dispatch('input');
+  assert.equal(els.saveSettingsButton.disabled, false);
+  await els.saveSettingsButton.dispatch('click');
+  assert.equal(patches[1].hubHostPort, 17321);
+  assert.equal(els.hubPortInput.value, '17321');
+});
 
 test('changing sync upload frequency auto-saves without replacing Hub drafts', async () => {
   const els = {
@@ -1733,6 +2067,77 @@ test('Host Hub port draft survives settings rehydration and saves with Hub field
   assert.equal(els.hubPortInput.value, '18000');
 });
 
+test('Host Hub port draft survives leaving and returning to Host mode', async () => {
+  const classList = { toggle() {} };
+  const els = {
+    saveSettingsButton: fakeHubControl(),
+    hubModeOptions: { querySelectorAll: () => [] },
+    hubClientFields: { classList },
+    hubHostFields: { classList },
+    hubPortInput: fakeHubControl(),
+    hubSecretInput: fakeHubControl(),
+    hubUrlInput: fakeHubControl(),
+    secretInput: fakeHubControl(),
+    deviceIdInput: fakeHubControl(),
+    syncUploadIntervalInput: fakeHubControl('0'),
+    showLimitUsedInputs: []
+  };
+  const state = {
+    settings: {
+      hubMode: 'host',
+      hubHostPort: 17321,
+      hubHostSecret: 'host-secret',
+      hubUrl: '',
+      secret: '',
+      deviceId: 'saved-device',
+      syncUploadIntervalMs: 0
+    }
+  };
+  const patches = [];
+  let vmContext;
+  vmContext = loadHubSettingsWiring(els, {
+    state,
+    saveSettings: async (patch) => {
+      patches.push({ ...patch });
+      Object.assign(state.settings, patch);
+      vmContext.syncHubModeUi();
+      vmContext.syncHubDraftFields();
+    },
+    refreshHubInfo: async () => {},
+    refreshHubBuildStatus: async () => {},
+    refreshStats: async () => {}
+  });
+  vmContext.syncHubModeUi();
+  vmContext.syncHubDraftFields();
+
+  els.hubPortInput.value = '18000';
+  await els.hubPortInput.dispatch('input');
+  assert.equal(els.saveSettingsButton.disabled, false);
+
+  // Model the settings pushes emitted by switching away from Host and back.
+  state.settings.hubMode = 'client';
+  vmContext.syncHubModeUi();
+  vmContext.syncHubDraftFields();
+  assert.equal(els.hubPortInput.value, '18000');
+  assert.equal(els.saveSettingsButton.disabled, true);
+
+  state.settings.hubMode = 'host';
+  vmContext.syncHubModeUi();
+  vmContext.syncHubDraftFields();
+  assert.equal(els.hubPortInput.value, '18000');
+  assert.equal(els.saveSettingsButton.disabled, false);
+
+  await els.saveSettingsButton.dispatch('click');
+  assert.deepEqual(patches, [{
+    hubUrl: '',
+    secret: '',
+    deviceId: 'saved-device',
+    hubHostPort: 18000
+  }]);
+  assert.equal(els.hubPortInput.value, '18000');
+  assert.equal(els.saveSettingsButton.disabled, true);
+});
+
 test('remote Hub build status is wired as a separate localized sync hint', () => {
   const html = readRendererFile('index.html');
   const app = readRendererFile('app.js');
@@ -1751,7 +2156,7 @@ test('remote Hub build status is wired as a separate localized sync hint', () =>
   assert.match(refreshBody, /const request = \+\+hubBuildStatusRequest/);
   assert.equal([...refreshBody.matchAll(/request !== hubBuildStatusRequest/g)].length, 2);
   assert.match(app, /HUB_BUILD_STATUS_REFRESH_TTL_MS = 5 \* 60 \* 1000/);
-  assert.match(app, /visibilitychange[\s\S]*hubBuildStatusRefreshDue\(\)[\s\S]*void refreshHubBuildStatus\(\)/);
+  assert.match(app, /handleWindowVisibilityChange[\s\S]*hubBuildStatusRefreshDue\(\)[\s\S]*void refreshHubBuildStatus\(\)/);
   assert.match(preload, /getHubBuildStatus: \(\) => ipcRenderer\.invoke\('hub:getBuildStatus'\)/);
   assert.match(main, /ipcMain\.handle\('hub:getBuildStatus'/);
   assert.equal([...i18n.matchAll(/'settings\.sync\.hubBuild\.current':/g)].length, 5);
@@ -1859,8 +2264,11 @@ test('main collectors share one live GUI limit credential resolver in every widg
   for (const key of [
     'claudeWebCookie', 'zaiApiKey', 'zaiApiRegion', 'volcengineAccessKeyId', 'volcengineSecretAccessKey',
     'volcengineRegion', 'qoderCookie', 'qoderSite', 'commandcodeCookie', 'kimiApiKey', 'kimiWebAccessToken',
-    'ollamaCookie'
+    'ollamaCookie', 'zedCookie'
   ]) assert.match(runtimeConfig, new RegExp(`${key}: settings\\.${key}`));
+  assert.match(runtimeConfig, /env\.TOKEN_MONITOR_ZED_COOKIE/);
+  assert.doesNotMatch(runtimeConfig, /TOKEN_MONITOR_ZED_USER_ID|TOKEN_MONITOR_ZED_ACCESS_TOKEN|zedManagedAccounts/);
+  assert.doesNotMatch(main, /zedManagedAccountsForCollector/);
 });
 
 test('WorkBuddy Electron fetch adapter forwards parsed response JSON', () => {

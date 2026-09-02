@@ -683,8 +683,16 @@
 
   function meteredWindows(provider) {
     return (provider?.windows || []).filter((window) => (
-      window && window.showMeter !== false && windowPercent(provider, window) !== null
+      window
+      && window.showMeter !== false
+      && isCanonicalCodexWindow(provider, window)
+      && windowPercent(provider, window) !== null
     ));
+  }
+
+  function isCanonicalCodexWindow(provider, window) {
+    if (providerId(provider) !== 'codex') return true;
+    return window?.additional !== true;
   }
 
   function preferredWindow(provider, kind) {

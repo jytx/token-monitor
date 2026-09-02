@@ -334,3 +334,27 @@ test('managed-account credentials are shared storage for MiMo cookies and MiniMa
   assert.equal(store.writeManagedAccountCredential('minimax', 'constructor', 'apiKey', 'v'), false);
   assert.equal(store.readManagedAccountCredential('minimax', 'minimax-1', 'constructor'), '');
 });
+
+test('stores and removes Antigravity OAuth credentials without exposing them as settings', (t) => {
+  const store = new CredentialStore(tempDataDir(t));
+  const credentials = {
+    accessToken: 'access-secret',
+    refreshToken: 'refresh-secret',
+    expiresAt: 12345,
+    clientId: 'client-id',
+    clientSecret: 'client-secret'
+  };
+  assert.equal(store.writeAntigravityCredential('account-1', credentials), true);
+  assert.deepEqual(store.readAntigravityCredential('account-1'), credentials);
+  assert.equal(store.settingsCredentials().antigravityManagedAccounts, undefined);
+  assert.equal(store.removeAntigravityCredential('account-1'), true);
+  assert.equal(store.readAntigravityCredential('account-1'), null);
+  assert.equal(store.writeAntigravityCredential('__proto__', credentials), false);
+});
+
+test('stores Zed dashboard Cookie as a fixed credential and redacts it for renderer settings', (t) => {
+  const store = new CredentialStore(tempDataDir(t));
+  store.replaceSettingsCredentials({ zedCookie: 'zed.session=secret; c15t=challenge' });
+  assert.equal(store.settingsCredentials().zedCookie, 'zed.session=secret; c15t=challenge');
+  assert.equal(credentialSettingsForRenderer({ zedCookie: 'secret' }).zedCookie, '');
+});

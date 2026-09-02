@@ -29,6 +29,7 @@ const CREDENTIAL_SETTING_PATHS = Object.freeze({
   qoderCookie: ['providers', 'qoder', 'cookie'],
   traeAccessToken: ['providers', 'trae', 'accessToken'],
   traeDeviceId: ['providers', 'trae', 'deviceId'],
+  zedCookie: ['providers', 'zed', 'cookie'],
   commandcodeCookie: ['providers', 'commandcode', 'cookie'],
   kimiApiKey: ['providers', 'kimi', 'apiKey'],
   kimiWebAccessToken: ['providers', 'kimi', 'webAccessToken'],
@@ -382,6 +383,31 @@ class CredentialStore {
 
   removeMimoCredential(id) {
     return this.removeManagedAccountCredentials('mimo', id);
+  }
+
+  readAntigravityCredential(id, document = this.readDocument()) {
+    const accountId = safeDynamicKey(id);
+    if (!accountId) return null;
+    const value = valueAt(document.credentials, ['providers', 'antigravity', 'accounts', accountId, 'credentials']);
+    return isObject(value) ? cloneJson(value) : null;
+  }
+
+  writeAntigravityCredential(id, credentials) {
+    const accountId = safeDynamicKey(id);
+    if (!accountId || !credentialValuePresent(credentials)) return false;
+    const document = this.readDocument();
+    setValueAt(document.credentials, ['providers', 'antigravity', 'accounts', accountId, 'credentials'], credentials);
+    this.writeDocument(document);
+    return true;
+  }
+
+  removeAntigravityCredential(id) {
+    const accountId = safeDynamicKey(id);
+    if (!accountId) return false;
+    const document = this.readDocument();
+    deleteValueAt(document.credentials, ['providers', 'antigravity', 'accounts', accountId]);
+    this.writeDocument(document);
+    return !this.readAntigravityCredential(accountId);
   }
 
   migrateLegacyMimoCredentials(entries) {

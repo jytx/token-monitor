@@ -42,13 +42,14 @@ test('tool diagnostics summarize complete health and render three semantic group
   assert.match(actions, /aria-live', 'polite'/);
   assert.match(actions, /state\.clientRescans\.snapshot\(clientId\)/);
   assert.match(actions, /state\.clientRescans\.begin\(clientId\)/);
-  assert.match(actions, /state\.clientRescans\.finish\(clientId, requestId, succeeded\)/);
+  assert.match(actions, /state\.clientRescans\.finish\(clientId, requestId, succeeded,/);
   assert.match(actions, /rescan\.disabled = rescanState\.pending/);
   assert.match(panel, /for \(const group of detail\.groups\)/);
   assert.match(panel, /note\.group === group\.id/);
   assert.match(stats, /renderSettingsSummaries\(\)/);
   assert.match(cssRule(css, '.tool-health-group'), /grid-template-columns:\s*58px minmax\(0,\s*1fr\)/);
   assert.match(cssRule(css, '.tool-health-group + .tool-health-group'), /border-top/);
+  assert.match(cssRule(css, '.tool-health-action.is-repair'), /color:\s*var\(--orange\)/);
 });
 
 test('tool diagnostics bind source values to the full health snapshot key', () => {
@@ -59,6 +60,7 @@ test('tool diagnostics bind source values to the full health snapshot key', () =
   const loader = functionBody(app, 'loadClientSources', 'refillOpenClientHealthPanel');
   const expand = functionBody(app, 'setClientHealthExpanded', 'clientPeriodUsage');
   const actions = functionBody(app, 'clientHealthActions', 'clientHealthPanel');
+  const panel = functionBody(app, 'clientHealthPanel', 'localWslStatus');
 
   assert.match(identity, /deviceId[\s\S]*clientId[\s\S]*observedAt/);
   assert.match(identity, /clientHealthPresentationApi\.hasClientHealth\(health, id\)/);
@@ -71,10 +73,17 @@ test('tool diagnostics bind source values to the full health snapshot key', () =
   assert.match(loader, /return true;/);
   assert.match(expand, /if \(open\)[\s\S]*loadClientSources\(row\.dataset\.client, \{ force \}\)/);
   assert.match(actions, /succeeded = await window\.tokenMonitor\.rescanClient\(clientId\) === true/);
+  assert.match(actions, /detail\?\.notes\?\.some\(\(note\) => note\.code === 'sync-lock-present'\)/);
+  assert.match(actions, /window\.confirm\(t\('settings\.tools\.health\.repairConfirm'\)\)/);
+  assert.match(actions, /window\.tokenMonitor\.repairClientSyncLock\(clientId\)/);
+  assert.match(actions, /repair\.id = `toolHealthRepair-\$\{clientId\}`/);
+  assert.match(actions, /window\.tokenMonitor\.revealClientSyncLock\(clientId\)/);
+  assert.match(actions, /revealLock\.id = `toolHealthRevealLock-\$\{clientId\}`/);
   assert.match(actions, /if \(succeeded\) loadClientSources/);
   assert.match(actions, /rescan\.id = `toolHealthRescan-\$\{clientId\}`/);
   assert.match(actions, /reveal\.id = `toolHealthReveal-\$\{clientId\}`/);
   assert.match(actions, /exactLocalClientSources\(clientId\)/);
+  assert.match(panel, /clientHealthActions\(clientId, detail\)/);
   assert.doesNotMatch(app, /clientSourceIds/);
 });
 
@@ -413,6 +422,28 @@ test('main section holds views; appearance is its own section; window holds beha
   assert.ok(trayTextIndex > trayIconOptionsIndex, 'tray text select should be inside tray icon options');
   assert.ok(trayModeIndex > trayIconOptionsIndex, 'tray-only mode should depend on the tray icon toggle');
   assert.ok(trayModeIndex < trayIconOptionsCloseIndex, 'tray-only mode should be inside tray icon options');
+  // Hiding the Dock/taskbar entry is only recoverable through the tray icon, so
+  // the toggle has to live inside the tray icon's options. It follows tray-only
+  // mode and that mode's own note, which is only readable because the row is
+  // hidden — not dimmed — whenever tray-only mode is on.
+  const hideAppIconIndex = presenceGroup.indexOf('id="hideAppIconInput"');
+  const trayOptionsIndex = presenceGroup.indexOf('id="trayOptions"');
+  assert.ok(hideAppIconIndex > trayIconOptionsIndex, 'hiding the app icon should depend on the tray icon toggle');
+  assert.ok(hideAppIconIndex < trayIconOptionsCloseIndex, 'hiding the app icon should be inside tray icon options');
+  assert.ok(hideAppIconIndex > trayOptionsIndex, "hiding the app icon should follow tray-only mode and its note");
+  // Its explanation expands on enable like tray-only mode's, rather than sitting
+  // permanently under the row: nothing else in this nested group carries an
+  // always-on description, and one there costs two lines of height.
+  const hideAppIconOptionsIndex = presenceGroup.indexOf('id="hideAppIconOptions"');
+  assert.ok(hideAppIconOptionsIndex > hideAppIconIndex, 'the app-icon note should belong to its toggle');
+  assert.doesNotMatch(presenceGroup, /id="hideAppIconInput"[\s\S]{0,400}?settings-item-desc/);
+  // Electron exposes skipTaskbar on Windows and macOS only, so the row must not
+  // reach Linux, where it would save a setting that changes nothing. It starts
+  // hidden so an unknown platform never flashes an unsupported control.
+  assert.match(presenceGroup, /id="hideAppIconRow"[^>]*class="[^"]*hidden"/);
+  const app = readRendererFile('app.js');
+  assert.match(app, /const supported = platform === 'win32' \|\| platform === 'darwin';/);
+  assert.match(app, /const applies = supported && showTrayIcon && !trayMode;/);
   assert.doesNotMatch(
     presenceGroup,
     /id="trayIconOptions"[\s\S]*?<\/div>\s*<label class="checkbox-label"><input id="trayModeInput"/,
