@@ -51,6 +51,7 @@ Token Monitor は **トークン使用量**、**アカウント制限**、**セ�
 | <img src=".github/assets/tools-icon/kilocode.png" width="28" alt="Kilo Code" /> | Kilo Code | VS Code globalStorage tasks (`.../kilocode.kilo-code/tasks/`) — Linux およびリモート/WSL のみ | ✅ | — | — |
 | <img src=".github/assets/tools-icon/commandcode.png" width="28" alt="Command Code" /> | Command Code | `~/.commandcode/projects/**/*.jsonl` | ✅ | ✅ | — |
 | <img src=".github/assets/tools-icon/mimo-code.png" width="28" alt="MiMo Code" /> | MiMo Code | `~/.local/share/mimocode/mimocode.db` | ✅ | ✅ | — |
+| <img src=".github/assets/tools-icon/minimax.png" width="28" alt="Minimax" /> | Minimax / MiniMax Code | `~/.minimax/`（`sqlite.db`、`v2/sqlite/runtime-state.sqlite`）+ Minimax API キーでクォータ取得 | ✅ | ✅ | — |
 | <img src=".github/assets/tools-icon/zcode.png" width="28" alt="ZCode" /> | ZCode / GLM | `~/.zcode/`（`projects/`、`cli/db/db.sqlite`） | ✅ | ✅ | — |
 | <img src=".github/assets/tools-icon/kiro.png" width="28" alt="Kiro" /> | Kiro | `~/.kiro/sessions/cli/`, Kiro IDE globalStorage および `kiro-cli` DB | ✅ | ✅ | — |
 | <img src=".github/assets/tools-icon/codebuddy.png" width="28" alt="CodeBuddy" /> | CodeBuddy | `~/.codebuddy/projects/` + IDE / VS Code 拡張ログ | ✅ | — | — |
@@ -63,7 +64,6 @@ Token Monitor は **トークン使用量**、**アカウント制限**、**セ�
 | <img src=".github/assets/tools-icon/lmstudio.png" width="28" alt="LM Studio" /> | LM Studio | `~/.lmstudio/server-logs/**/*.log` | ✅ | — | — |
 | <img src=".github/assets/tools-icon/unsloth.png" width="28" alt="Unsloth" /> | Unsloth Studio | `~/.unsloth/studio/studio.db` | ✅ | — | — |
 | <img src=".github/assets/tools-icon/openrouter.png" width="28" alt="OpenRouter" /> | OpenRouter | OpenRouter API キー（使用量／キー上限。creditsアクセス許可時は残高も表示。公式文書ではManagementキーを指定） | — | ✅ | — |
-| <img src=".github/assets/tools-icon/minimax.png" width="28" alt="Minimax" /> | Minimax | Minimax API キー（Minimax API で Token Plan クォータ取得） | — | ✅ | — |
 | <img src=".github/assets/tools-icon/volcengine.png" width="28" alt="Volcengine" /> | Volcengine | Ark API key または Volcengine AK/SK（Volcengine API で Ark Coding Plan / Agent Plan クォータ取得） | — | ✅ | — |
 | <img src=".github/assets/tools-icon/ollama.png" width="28" alt="Ollama" /> | Ollama | Ollama Cloud cookie（ollama.com/settings で session/weekly 使用量を取得） | — | ✅ | — |
 | <img src=".github/assets/tools-icon/trae.png" width="28" alt="Trae CN" /> | Trae CN | Trae CN access token（trae.cn で Trae CN／SOLO credits を取得） | — | ✅ | — |
@@ -89,6 +89,12 @@ Token Monitor は **トークン使用量**、**アカウント制限**、**セ�
 Qoder CN のトークン使用量は API ではなくアプリのローカル SQLite データベースから読み取ります。Settings → tools で有効化します（オプトイン、デフォルト無効）。データベースはプラットフォームごとに自動検出されます：macOS `~/Library/Application Support/QoderCN/SharedClientCache/cache/db/local.db`、Windows `%APPDATA%\QoderCN\SharedClientCache\cache\db\local.db`、Linux `~/.config/QoderCN/SharedClientCache/cache/db/local.db` — `TOKEN_MONITOR_QODER_CN_DB_PATH` で上書き可能です。
 
 これは高度なローカル統合です：読み取りには PATH 上の `sqlite3` CLI、またはフラグ不要の `node:sqlite` を備えた Node ランタイム（Node ≥ 23.4、Electron では CLI が必要な場合あり）が必要です。読み取りエラーはログに記録され、完全な既存スナップショットがあればゼロ使用量で上書きせず保持します。コストはマッピングされた各モデルの models.dev カタログ料金から推定されます。Qoder がデータベーススキーマを変更すると動作しなくなる可能性があります。
+#### MiniMax Code（ローカルアダプター）
+
+MiniMax Code のトークン使用量は API ではなく CLI のローカル SQLite 台帳から読み取ります —— Settings → tools で有効化します（オプトイン、デフォルト無効）。現行の `~/.minimax/v2/sqlite/runtime-state.sqlite` と移行前の `~/.minimax/sqlite.db` の両方を読むため、アプリのアップグレード後も履歴は失われません —— `TOKEN_MONITOR_MINIMAX_DB_PATH` で上書き可能です。
+
+Qoder CN と同様の高度なローカル統合です：読み取りには PATH 上の `sqlite3` CLI、またはフラグ不要の `node:sqlite` を備えた Node ランタイムが必要です。使用量はモデル呼び出しごとに行単位で加算され（エージェント/ツール呼び出しを多数含むターンは各呼び出しを計上）、組み込み pi-agent フレームワーク由来のモデルなし行は「Pi Agent」にまとめられ、コストは models.dev カタログから推定されます（v2 台帳の保存コストは 0 埋めのため無視）。MiniMax がデータベーススキーマを変更すると動作しなくなる可能性があります。
+
 </details>
 
 ## ショーケース
@@ -121,7 +127,7 @@ Qoder CN のトークン使用量は API ではなくアプリのローカル SQ
 
 ### 使用量の追跡
 
-- **リアルタイムトークン追跡** — Claude Code、Codex、Cursor、GitHub Copilot、Antigravity、OpenCode など 28+ 種類の AI ツール、各ターンから数秒以内に UI 更新（全リストは上の表を参照）
+- **リアルタイムトークン追跡** — Claude Code、Codex、Cursor、GitHub Copilot、Antigravity、OpenCode など 29+ 種類の AI ツール、各ターンから数秒以内に UI 更新（全リストは上の表を参照）
 - **セッション別詳細** — Claude Code、Codex、OpenCode セッションでプロンプトごとのトークン、各応答のトークン分割・使用ツールまで展開（ローカル transcript/DB を必要時のみ読み込み、同期しない）
 - **キャッシュヒット統計** — ツール・モデルをクリックすると入力トークン（キャッシュ hit/miss）、出力トークン、ヒット率の詳細
 - **コストと通貨** — トークン数とともにコストを表示。USD、TWD、HKD、CNY に対応し、為替レートは毎日自動更新、設定で手動上書き可能

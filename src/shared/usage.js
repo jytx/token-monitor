@@ -185,6 +185,7 @@ function normalizeClientName(value) {
   if (raw.includes('kilocode')) return 'kilocode';
   if (/command[\s_-]*code/.test(raw)) return 'commandcode';
   if (raw.includes('micode')) return 'micode';
+  if (raw.includes('minimax')) return 'minimax';
   if (raw.includes('zcode')) return 'zcode';
   if (raw.includes('kiro')) return 'kiro';
   if (raw.includes('codebuddy')) return 'codebuddy';

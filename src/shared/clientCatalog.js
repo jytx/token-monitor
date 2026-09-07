@@ -32,7 +32,11 @@
   // double-counts the `claude` client: tokscale fixed the scan path but does not
   // dedup imports, and the imported rows aren't cleanly separable (MiMo is
   // multi-model). qodercn is opt-in per the upstream tool-support boundary — a
-  // local adapter that may break when Qoder changes its DB schema.
+  // local adapter that may break when Qoder changes its DB schema. minimax
+  // (MiniMax Code) is opt-in for the same schema-fragility reason: its usage
+  // lives in MiniMax Code's private SQLite ledger, which already moved once
+  // between app versions (~/.minimax/sqlite.db → ~/.minimax/v2/sqlite/), and
+  // tokscale upstream deliberately does not read it.
   //
   // `locallyParsed: true` means the client is excluded from the tokscale client
   // filter and read by a local adapter instead (collector.js). This is an axis
@@ -57,6 +61,7 @@
     { id: 'kilocode', label: 'Kilo Code' },
     { id: 'commandcode', label: 'Command Code' },
     { id: 'micode', label: 'MiMo Code', defaultTracked: false },
+    { id: 'minimax', label: 'MiniMax Code', defaultTracked: false, locallyParsed: true },
     { id: 'zcode', label: 'ZCode' },
     { id: 'kiro', label: 'Kiro' },
     { id: 'codebuddy', label: 'CodeBuddy' },

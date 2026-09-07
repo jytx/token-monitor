@@ -53,6 +53,13 @@ const {
   qoderCnDataPaths,
   resolveQoderCnPricing
 } = require('./providers/qodercn/usage');
+const {
+  buildMinimaxHistoryGraph,
+  buildMinimaxPeriods,
+  collectMinimaxRows,
+  minimaxDataPaths,
+  minimaxPricingModelKey
+} = require('./providers/minimax/usage');
 const { resolveReasonixStatsDir, REASONIX_SOURCE_CHECK_ID } = require('./providers/reasonix/paths');
 const { resolveDshSessionsDir, DSH_SOURCE_CHECK_ID } = require('./providers/dsh/paths');
 const { indexDshSessionHeaders, readDshSessionHeader, resolveDshSessionsRoot } = require('./providers/dsh/sessionFiles');
@@ -1227,6 +1234,10 @@ async function collectHistoryOnce(options) {
     rawGraphs.push(options.qoderCnGraph);
     histories.push(normalizeHistory(parseGraphResult(options.qoderCnGraph), { capDays, todayKey }));
   }
+  if (options.minimaxGraph) {
+    rawGraphs.push(options.minimaxGraph);
+    histories.push(normalizeHistory(parseGraphResult(options.minimaxGraph), { capDays, todayKey }));
+  }
   if (options.dailyHistoryArchiveEnabled) {
     try {
       const retainedGraph = retainDailyHistory(rawGraphs, {
@@ -1321,6 +1332,7 @@ async function collectUsageOnce(options) {
   const tokscaleClients = normalizedClients ? normalizedClients.split(',').filter((c) => !localClients.has(c)).join(',') : normalizedClients;
   const includesProma = normalizedClients.split(',').includes('proma');
   const includesQoderCn = normalizedClients.split(',').includes('qodercn');
+  const includesMinimax = normalizedClients.split(',').includes('minimax');
   const trackedClientSet = new Set(normalizedClients.split(',').filter(Boolean));
   const targetClients = [...new Set(normalizeClientsCsv(options.targetClients).split(',').filter((client) => trackedClientSet.has(client)))];
   const targetRequested = targetClients.length > 0;
@@ -1332,6 +1344,11 @@ async function collectUsageOnce(options) {
   if (qoderCnReadState) {
     qoderCnReadState.periodFailed = false;
     qoderCnReadState.fallbackUsed = false;
+  }
+  const minimaxReadState = options.minimaxReadState;
+  if (minimaxReadState) {
+    minimaxReadState.periodFailed = false;
+    minimaxReadState.fallbackUsed = false;
   }
   let today = emptyPeriod();
   let month = emptyPeriod();
@@ -1351,11 +1368,17 @@ async function collectUsageOnce(options) {
   let qoderCnRows = null;
   let qoderCnPricing = null;
   let qoderCnPeriodReadFailed = false;
+  let minimaxPeriods = null;
+  let minimaxRows = null;
+  let minimaxPricing = null;
+  let minimaxPeriodReadFailed = false;
   const emitProgress = (periods) => {
     if (typeof options.onProgress !== 'function') return;
     const progress = { ...periods };
     if (qoderCnPeriods?.today && progress.today) progress.today = mergePeriods(progress.today, qoderCnPeriods.today);
     if (qoderCnPeriods?.month && progress.month) progress.month = mergePeriods(progress.month, qoderCnPeriods.month);
+    if (minimaxPeriods?.today && progress.today) progress.today = mergePeriods(progress.today, minimaxPeriods.today);
+    if (minimaxPeriods?.month && progress.month) progress.month = mergePeriods(progress.month, minimaxPeriods.month);
     try { options.onProgress({ ...progress, updatedAt: new Date().toISOString() }); } catch (_) {}
   };
   if (normalizedClients) {
@@ -1422,6 +1445,34 @@ async function collectUsageOnce(options) {
         qoderCnPeriods = options.qoderCnFallbackPeriods || null;
       }
     }
+    if (includesMinimax && (!targetRequested || targetClients.includes('minimax'))) {
+      try {
+        const minimaxSinceMs = anchorUsed ? new Date(collectedAt.getFullYear(), collectedAt.getMonth(), collectedAt.getDate()).getTime() : undefined;
+        minimaxRows = await collectMinimaxRows({ homeDir: options.homeDir, logger: options.logger, sinceMs: minimaxSinceMs });
+        // 定价走 collector 的通用 resolveModelPricing（共享缓存、目录兜底），
+        // 不在适配器里另建一套——MiniMax 模型无路由档位，无需 qodercn 那层包装。
+        minimaxPricing = await resolveModelPricing(minimaxRows, {
+          lookupModelPricing: options.lookupModelPricing || lookupModelPricing,
+          normalizeModelId: minimaxPricingModelKey,
+          commandTimeoutMs: options.pricingTimeoutMs,
+          pricingRevision: options.pricingRevision
+        });
+        const minimaxJson = buildMinimaxPeriods({ now: collectedAt, allTimeSince, rows: minimaxRows, pricingByModel: minimaxPricing });
+        minimaxPeriods = {
+          today: extractUsageFromTokscale(minimaxJson.today),
+          month: extractUsageFromTokscale(minimaxJson.month),
+          allTime: extractUsageFromTokscale(minimaxJson.allTime)
+        };
+      } catch (err) {
+        if (typeof options.logger === 'function') options.logger(`minimax parse failed: ${err.message}`);
+        minimaxPeriodReadFailed = true;
+        if (minimaxReadState) {
+          minimaxReadState.periodFailed = true;
+          minimaxReadState.fallbackUsed = Boolean(options.minimaxFallbackPeriods);
+        }
+        minimaxPeriods = options.minimaxFallbackPeriods || null;
+      }
+    }
     throwIfAborted(options.signal);
     if (anchorUsed) {
       // Anchored tick (watch-triggered): every tokscale period scan costs the
@@ -1472,6 +1523,11 @@ async function collectUsageOnce(options) {
         // A transient local.db read failure must not turn the existing Qoder CN
         // partition into an empty one or subtract it from month/allTime.
         freshPartitions.qodercn = anchor.todayPartitions.qodercn;
+      }
+      if (minimaxPeriods) freshPartitions.minimax = minimaxPeriods.today;
+      if (minimaxPeriodReadFailed && anchor.todayPartitions?.minimax) {
+        // 同上：瞬态 SQLite 锁不能把已有的 MiniMax 分区清零并从 month/allTime 里扣掉。
+        freshPartitions.minimax = anchor.todayPartitions.minimax;
       }
       if (!useTargetedPartitions) {
         // The fallback rebuilds every Tokscale partition, but parse-local
@@ -1539,6 +1595,12 @@ async function collectUsageOnce(options) {
       month = mergePeriods(month, qoderCnPeriods.month);
       allTime = mergePeriods(allTime, qoderCnPeriods.allTime);
       todayPartitions = { ...(todayPartitions || {}), qodercn: qoderCnPeriods.today };
+    }
+    if (minimaxPeriods && !anchorUsed) {
+      today = mergePeriods(today, minimaxPeriods.today);
+      month = mergePeriods(month, minimaxPeriods.month);
+      allTime = mergePeriods(allTime, minimaxPeriods.allTime);
+      todayPartitions = { ...(todayPartitions || {}), minimax: minimaxPeriods.today };
     }
     todayPartitions = completeTodayPartitions(todayPartitions, normalizedClients);
     // Partition metadata is internal but must remain as complete as the public
@@ -1706,6 +1768,7 @@ async function collectUsageOnce(options) {
       windowsPeriods,
       todayPartitions,
       qoderCnPeriods,
+      minimaxPeriods,
       wslBundle,
       wslStatus,
       ...(summary.nativeSessions ? { nativeSessions: summary.nativeSessions } : {}),
@@ -1743,14 +1806,36 @@ async function collectUsageOnce(options) {
         if (typeof options.logger === 'function') options.logger(`qodercn history parse failed: ${err.message}`);
       }
     }
+    // MiniMax 历史图与 qodercn 同构：锚定 tick 只读今天，这里补一次全量读。
+    let minimaxGraph = null;
+    let minimaxHistoryReadFailed = false;
+    if (includesMinimax) {
+      try {
+        const rows = (!anchorUsed && minimaxRows) ? minimaxRows : await collectMinimaxRows({ homeDir: options.homeDir, logger: options.logger });
+        const pricing = (!anchorUsed && minimaxPricing) ? minimaxPricing : await resolveModelPricing(rows, {
+          lookupModelPricing: options.lookupModelPricing || lookupModelPricing,
+          normalizeModelId: minimaxPricingModelKey,
+          commandTimeoutMs: options.pricingTimeoutMs,
+          pricingRevision: options.pricingRevision
+        });
+        minimaxGraph = buildMinimaxHistoryGraph({ rows, pricingByModel: pricing });
+      } catch (err) {
+        minimaxHistoryReadFailed = true;
+        if (typeof options.logger === 'function') options.logger(`minimax history parse failed: ${err.message}`);
+      }
+    }
     const historyQoderCnGraph = qoderCnHistoryReadFailed
       ? options.qoderCnHistoryFallbackGraph
       : qoderCnGraph;
+    const historyMinimaxGraph = minimaxHistoryReadFailed
+      ? options.minimaxHistoryFallbackGraph
+      : minimaxGraph;
     throwIfAborted(options.signal);
     const history = await collectHistoryOnce({
       clients: tokscaleClients,
       promaGraph: includesProma ? buildPromaHistoryGraph({ rows: promaRows || collectPromaRows(), pricingByModel: promaPricing || {} }) : null,
       qoderCnGraph: historyQoderCnGraph || null,
+      minimaxGraph: historyMinimaxGraph || null,
       historyEnabled: options.historyEnabled,
       commandTimeoutMs: options.historyTimeoutMs,
       capDays: options.historyCapDays,
@@ -1768,6 +1853,9 @@ async function collectUsageOnce(options) {
     if (history) summary.history = history;
     if (!qoderCnHistoryReadFailed && qoderCnGraph && typeof options.onQoderCnHistoryGraph === 'function') {
       options.onQoderCnHistoryGraph(qoderCnGraph);
+    }
+    if (!minimaxHistoryReadFailed && minimaxGraph && typeof options.onMinimaxHistoryGraph === 'function') {
+      options.onMinimaxHistoryGraph(minimaxGraph);
     }
   }
   // After history, so `lastActivityDay` can come from the daily buckets this
@@ -2189,6 +2277,15 @@ function clientSourceRoots(clientsCsv, options = {}) {
   // Qoder CN — SQLite DB under the platform Application Support dir.
   const qoderCnPaths = qoderCnDataPaths({ homeDir: home, platform: process.platform, env: process.env });
   add('qodercn', ...qoderCnPaths.dbPaths.map((dbPath) => ['qodercn-db', path.dirname(dbPath), dbPath]));
+  // MiniMax Code — v2 运行时的 sqlite 目录是唯一的活跃写入点，watch 它即可
+  // 秒级感知 token_usage 落账；v1 旧库已停写（版本迁移后只读历史），注册为
+  // 来源信号但不 watch（~/.minimax 根下 sessions/logs/background-tasks 的
+  // 写入churn 会制造大量无用量变化的无效 tick），见 INTERVAL_ONLY 集合。
+  add(
+    'minimax',
+    ['minimax-sqlite', path.join(home, '.minimax', 'v2', 'sqlite'), path.join(home, '.minimax', 'v2', 'sqlite', 'runtime-state.sqlite')],
+    ['minimax-legacy-sqlite', path.join(home, '.minimax'), path.join(home, '.minimax', 'sqlite.db')]
+  );
   add('reasonix', [
     REASONIX_SOURCE_CHECK_ID,
     resolveReasonixStatsDir({ env: process.env, homeDir: home, platform: process.platform, cwdDir: process.cwd() })
@@ -2279,7 +2376,7 @@ function clientSourceRoots(clientsCsv, options = {}) {
 // exhaustion the same tree becomes an even more expensive 2-second polling
 // watch. Regular interval ticks (five minutes by default), manual refreshes, and
 // hourly full reconciliation still scan it through the unchanged Kiro client.
-const INTERVAL_ONLY_SOURCE_CHECK_IDS = new Set(['kiro-ide-globalstorage']);
+const INTERVAL_ONLY_SOURCE_CHECK_IDS = new Set(['kiro-ide-globalstorage', 'minimax-legacy-sqlite']);
 
 // The watcher only ever wants paths, so it keeps its original shape rather than
 // learning about check ids it would immediately discard.
@@ -3005,12 +3102,15 @@ function canTargetTodayPartitions(anchor, targetClients) {
   );
 }
 
-function configFingerprint(clientsCsv, allTimeSince, projectsEnabled = true, qoderCnDbPath = '') {
+function configFingerprint(clientsCsv, allTimeSince, projectsEnabled = true, qoderCnDbPath = '', minimaxDbPathsCsv = '') {
   // Deterministic string that captures the config inputs anchor correctness
   // depends on. When this changes, the persisted anchor is invalidated.
   const qoderCn = String(qoderCnDbPath || '').trim();
   const qoderCnPart = qoderCn ? `|qodercn:${path.resolve(qoderCn)}` : '';
-  return `${normalizeClientsCsv(clientsCsv)}|${allTimeSince}|projects:${projectsEnabled !== false ? 'on' : 'off'}${qoderCnPart}`;
+  // MiniMax 候选库路径全量参与（不做存在性过滤）：列表是静态的，库文件随版本
+  // 迁移出现/消失不构成配置变化，数据变化由正常 tick 覆盖。
+  const minimaxPart = String(minimaxDbPathsCsv || '').trim() ? `|minimax:${minimaxDbPathsCsv}` : '';
+  return `${normalizeClientsCsv(clientsCsv)}|${allTimeSince}|projects:${projectsEnabled !== false ? 'on' : 'off'}${qoderCnPart}${minimaxPart}`;
 }
 
 function qoderCnDbPathForClients(clientsCsv, options = {}) {
@@ -3020,6 +3120,14 @@ function qoderCnDbPathForClients(clientsCsv, options = {}) {
     platform: options.platform || process.platform,
     env: options.env || process.env
   }).dbPaths[0] || '';
+}
+
+function minimaxDbPathsForClients(clientsCsv, options = {}) {
+  if (!normalizeClientsCsv(clientsCsv).split(',').includes('minimax')) return '';
+  return minimaxDataPaths({
+    homeDir: options.homeDir,
+    env: options.env || process.env
+  }).dbPaths.map((dbPath) => path.resolve(dbPath)).join(',');
 }
 
 // The one place that decides whether a persisted anchor may be reused, shared by
@@ -3032,10 +3140,10 @@ function qoderCnDbPathForClients(clientsCsv, options = {}) {
 // collector still reuses the periods then and simply forces a full scan, while
 // a seed has nothing to stand on and declines.
 function collectorAnchorTrust(saved, options = {}) {
-  const { clients = '', allTimeSince = '', projectsEnabled = true, qoderCnDbPath = '', now = new Date() } = options;
+  const { clients = '', allTimeSince = '', projectsEnabled = true, qoderCnDbPath = '', minimaxDbPaths = '', now = new Date() } = options;
   if (!saved || saved.dateKey !== localTodayKey(now)) return null;
   if (!saved.today || !saved.month || !saved.allTime) return null;
-  if (saved.configFingerprint !== configFingerprint(clients, allTimeSince, projectsEnabled, qoderCnDbPath)) return null;
+  if (saved.configFingerprint !== configFingerprint(clients, allTimeSince, projectsEnabled, qoderCnDbPath, minimaxDbPaths)) return null;
   const parsed = Date.parse(saved.fullScanAt || '');
   const capturedAtMs = Number.isFinite(parsed) && parsed <= now.getTime() ? parsed : null;
   return { capturedAtMs };
@@ -3121,11 +3229,18 @@ function watcherOptions(usePolling, ignored) {
   };
 }
 
-function isQoderCnSelfWatchEvent(filePath, rootsByClient = {}) {
-  if (!filePath || !path.basename(filePath).endsWith('.db-shm')) return false;
+// 两个本地 SQLite 适配器共用的自触发过滤器：只读打开会重建库的 wal-index
+// sidecar（qodercn 的 local.db-shm、minimax 的 runtime-state.sqlite-shm），
+// watch 到它就会无限自我刷新（qodercn 实测：客户端停止时 142 事件/5 分钟，
+// 过滤后归零）。真实数据信号在库本体与 *-wal 上，所以只丢弃这两个适配器
+// 根下的 *-shm 事件，按后缀匹配两种命名（.db-shm / .sqlite-shm）。
+function isSqliteShmSelfWatchEvent(filePath, rootsByClient = {}) {
+  if (!filePath) return false;
+  const base = path.basename(filePath);
+  if (!base.endsWith('.db-shm') && !base.endsWith('.sqlite-shm')) return false;
   const resolved = path.resolve(filePath);
-  return (rootsByClient.qodercn || [])
-    .some((root) => resolved.startsWith(path.resolve(root) + path.sep));
+  return ['qodercn', 'minimax'].some((client) => (rootsByClient[client] || [])
+    .some((root) => resolved.startsWith(path.resolve(root) + path.sep)));
 }
 
 function startCollector(options) {
@@ -3170,6 +3285,10 @@ function startCollector(options) {
     platform: process.platform,
     env: process.env
   });
+  const minimaxDbPaths = minimaxDbPathsForClients(normalizedClients, {
+    homeDir: options.homeDir,
+    env: process.env
+  });
   let tickInFlight = false;
   let idleWaiters = [];
   let tickPending = false;
@@ -3211,6 +3330,7 @@ function startCollector(options) {
   // later full/history tick instead of losing it at the tick boundary.
   let liveDailyHistoryDays = {};
   let qoderCnHistoryGraph = null;
+  let minimaxHistoryGraph = null;
   let lastFullScanAt = 0;
   let pendingWaiters = [];
   let debounceTimer = null;
@@ -3306,7 +3426,8 @@ function startCollector(options) {
         clients,
         allTimeSince,
         projectsEnabled: options.projectsEnabled,
-        qoderCnDbPath
+        qoderCnDbPath,
+        minimaxDbPaths
       });
       if (trust) {
         anchor = {
@@ -3315,6 +3436,7 @@ function startCollector(options) {
           month: saved.month,
           allTime: saved.allTime,
           qoderCnPeriods: saved.qoderCnPeriods || null,
+          minimaxPeriods: saved.minimaxPeriods || null,
           // Per-client partitions are deliberately rebuilt by the first
           // anchored all-client tick after restart. Persisted partitions
           // could be stale for clients that changed while the app was down.
@@ -3396,6 +3518,7 @@ function startCollector(options) {
     try {
       let captured = null;
       const qoderCnReadState = { periodFailed: false };
+      const minimaxReadState = { periodFailed: false };
       const summary = await collectUsageOnce({
         ...options,
         signal: runtimeSignal,
@@ -3441,8 +3564,12 @@ function startCollector(options) {
         qoderCnFallbackPeriods: anchor?.qoderCnPeriods || null,
         qoderCnHistoryFallbackGraph: qoderCnHistoryGraph,
         qoderCnReadState,
+        minimaxFallbackPeriods: anchor?.minimaxPeriods || null,
+        minimaxHistoryFallbackGraph: minimaxHistoryGraph,
+        minimaxReadState,
         onAnchorComputed: (x) => { captured = x; },
         onQoderCnHistoryGraph: (graph) => { qoderCnHistoryGraph = graph; },
+        onMinimaxHistoryGraph: (graph) => { minimaxHistoryGraph = graph; },
         onProgress: (partial) => {
           if (!partial.today) return;
           try {
@@ -3453,6 +3580,17 @@ function startCollector(options) {
               const qoderCnAnchorToday = qoderCnReadState.periodFailed && !qoderCnReadState.fallbackUsed
                 ? anchor?.todayPartitions?.qodercn
                 : null;
+              const minimaxAnchorToday = minimaxReadState.periodFailed && !minimaxReadState.fallbackUsed
+                ? anchor?.todayPartitions?.minimax
+                : null;
+              // 快照外需要并入 today 的额外分区（读失败保留的 qodercn/minimax
+              // 锚定分区、冻结的 WSL）。保持原语义：没有任何可并项时走恒等
+              // 直传，不做 normalize 往返（非 WSL 机器的共享预览路径）。
+              const previewTodayExtras = [
+                ...(qoderCnAnchorToday ? [qoderCnAnchorToday] : []),
+                ...(minimaxAnchorToday ? [minimaxAnchorToday] : []),
+                ...(wsl.today ? [wsl.today] : [])
+              ];
               const preview = {
                 deviceId, hostname: os.hostname(),
                 platform: `${process.platform}-${process.arch}`,
@@ -3461,32 +3599,29 @@ function startCollector(options) {
                 updatedAt: partial.updatedAt,
                 agentVersion, agentRuntime,
                 trackedClients: (clients || '').split(',').filter(Boolean),
-                // Merge the frozen WSL snapshot into today (as month/allTime do
-                // below) so the today card keeps its WSL contribution during a
-                // warm scan instead of dropping to host-only until the final tick.
-                // The upstream wsl.today guard is preserved: non-WSL machines
-                // keep the identity pass-through instead of a normalize round
-                // trip on this shared preview path.
-                today: qoderCnAnchorToday
-                  ? mergePeriods(partial.today, qoderCnAnchorToday, wsl.today)
-                  : (wsl.today ? mergePeriods(partial.today, wsl.today) : partial.today)
+                today: previewTodayExtras.length > 0
+                  ? mergePeriods(partial.today, ...previewTodayExtras)
+                  : partial.today
               };
+              // 任一本地适配器读失败时，periods 语义都不完整，month/allTime 与
+              // clientStatus 留给下一拍完整数据（与 qodercn 单独失败时相同）。
+              const localPeriodReadFailed = qoderCnReadState.periodFailed || minimaxReadState.periodFailed;
               // Only include month/allTime when actually scanned. During warm
               // full scans the main.js handler carries the previous values
               // forward for omitted fields, so these cards don't flash empty.
-              if (partial.month && !qoderCnReadState.periodFailed) {
+              if (partial.month && !localPeriodReadFailed) {
                 preview.month = wsl.month
                   ? mergePeriods(partial.month, wsl.month)
                   : partial.month;
               }
-              if (partial.allTime && !qoderCnReadState.periodFailed) {
+              if (partial.allTime && !localPeriodReadFailed) {
                 preview.allTime = wslAnchor
                   ? mergePeriods(partial.allTime, wslAnchor.allTime)
                   : partial.allTime;
               }
               // Only derive clientStatus when allTime is available; warm
               // scans carry the previous status forward in main.js.
-              if (partial.allTime && !qoderCnReadState.periodFailed) {
+              if (partial.allTime && !localPeriodReadFailed) {
                 preview.clientStatus = deriveClientStatus(clients, partial.allTime);
               }
               onPreview(preview);
@@ -3515,12 +3650,13 @@ function startCollector(options) {
           allTime: captured.windowsPeriods.allTime,
           todayPartitions: captured.todayPartitions,
           qoderCnPeriods: captured.qoderCnPeriods,
+          minimaxPeriods: captured.minimaxPeriods,
           ...(captured.nativeSessions ? { nativeSessions: captured.nativeSessions } : {}),
           ...(captured.nativeProjects ? { nativeProjects: captured.nativeProjects } : {})
         };
         wslAnchor = captured.wslBundle;
         wslStatusAnchor = captured.wslStatus || null;
-        if (!qoderCnReadState.periodFailed) lastFullScanAt = Date.now();
+        if (!qoderCnReadState.periodFailed && !minimaxReadState.periodFailed) lastFullScanAt = Date.now();
         if (options.anchorPersistenceEnabled !== false) {
           try {
             fs.mkdirSync(path.dirname(anchorPath), { recursive: true });
@@ -3530,11 +3666,12 @@ function startCollector(options) {
               month: anchor.month,
               allTime: anchor.allTime,
               qoderCnPeriods: anchor.qoderCnPeriods,
+              minimaxPeriods: anchor.minimaxPeriods,
               wslBundle: wslAnchor,
               wslStatus: wslStatusAnchor,
               ...(anchor.nativeSessions ? { nativeSessions: anchor.nativeSessions } : {}),
               ...(anchor.nativeProjects ? { nativeProjects: anchor.nativeProjects } : {}),
-              configFingerprint: configFingerprint(clients, allTimeSince, options.projectsEnabled, qoderCnDbPath),
+              configFingerprint: configFingerprint(clients, allTimeSince, options.projectsEnabled, qoderCnDbPath, minimaxDbPaths),
               fullScanAt: new Date(lastFullScanAt).toISOString()
             }));
           } catch (_) {}
@@ -3550,6 +3687,13 @@ function startCollector(options) {
             allTime: applyPeriodDelta(anchor.qoderCnPeriods.allTime, captured.qoderCnPeriods.today, anchor.qoderCnPeriods.today)
           };
         }
+        if (!minimaxReadState.periodFailed && captured.minimaxPeriods?.today && anchor.minimaxPeriods) {
+          anchor.minimaxPeriods = {
+            today: captured.minimaxPeriods.today,
+            month: applyPeriodDelta(anchor.minimaxPeriods.month, captured.minimaxPeriods.today, anchor.minimaxPeriods.today),
+            allTime: applyPeriodDelta(anchor.minimaxPeriods.allTime, captured.minimaxPeriods.today, anchor.minimaxPeriods.today)
+          };
+        }
         if (captured.nativeSessions) anchor.nativeSessions = captured.nativeSessions;
         if (captured.nativeProjects) anchor.nativeProjects = captured.nativeProjects;
         if (refreshWsl) {
@@ -3558,6 +3702,7 @@ function startCollector(options) {
         }
       }
       if (qoderCnReadState.periodFailed) scheduledWatchNeedsFullScan = true;
+      if (minimaxReadState.periodFailed) scheduledWatchNeedsFullScan = true;
       const transformedSummary = await onUpdate?.(summary, reason);
       const visibleSummary = transformedSummary && typeof transformedSummary === 'object'
         ? transformedSummary
@@ -3844,14 +3989,13 @@ function startCollector(options) {
       // The quit path leaves the watcher open (see stop), so events can still
       // arrive after the collector is done with them.
       if (stopped) return;
-      // Our own read-only opens of Qoder CN's local.db recreate its SQLite
-      // wal-index (local.db-shm), so watching that sidecar re-triggers the
-      // watch loop forever — confirmed: 142 events/5min with Qoder CN fully
-      // stopped, dropping to 0 after this filter. The real data signal lives
-      // in local.db / local.db-wal, so drop *.db-shm events under the
-      // qodercn roots only. (hermes/micode may share this pattern upstream —
-      // out of scope here, their watch behaviour is left untouched.)
-      if (isQoderCnSelfWatchEvent(filePath, rootsByClient)) return;
+      // 我们自己只读打开本地 SQLite 记账库会重建其 wal-index（*-shm），
+      // watch 到这个 sidecar 会无限自我刷新——qodercn 实测 142 事件/5 分钟
+      // （Qoder CN 完全停止时），过滤后归零。真实数据信号在库本体与 *-wal，
+      // 所以只丢弃 qodercn/minimax 两个本地 sqlite 适配器根下的 *-shm 事件。
+      // （hermes/micode 上游可能同样如此——超出本处范围，它们的 watch 行为
+      // 保持原样。）
+      if (isSqliteShmSelfWatchEvent(filePath, rootsByClient)) return;
       activityRevision += 1;
       if (tickPending) {
         pendingActivityRevision = pendingActivityRevision === null
@@ -4060,6 +4204,7 @@ module.exports = {
   collectorAnchorTrust,
   configFingerprint,
   qoderCnDbPathForClients,
+  minimaxDbPathsForClients,
   deriveClientHealth,
   deriveClientStatus,
   mergeClientActivityDays,
@@ -4092,7 +4237,7 @@ module.exports = {
   // read or pin a client's floor directly instead of inferring it from tick
   // timings; the collector never takes a second instance.
   selfSyncThrottle,
-  isQoderCnSelfWatchEvent,
+  isSqliteShmSelfWatchEvent,
   shouldIncludeHistory,
   spawnTokscaleHelp,
   startCollector,

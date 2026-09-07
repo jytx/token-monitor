@@ -51,7 +51,7 @@ test('derived KNOWN_CLIENTS keeps the established id order', () => {
   assert.equal(KNOWN_CLIENTS, CLIENT_IDS.join(','));
   assert.equal(
     KNOWN_CLIENTS,
-    'claude,codex,opencode,hermes,openclaw,cursor,antigravity,cline,kimi,qwen,grok,copilot,pi,zed,kilocode,commandcode,micode,zcode,kiro,codebuddy,workbuddy,proma,qodercn,reasonix,dsh,cherrystudio,lmstudio,unsloth'
+    'claude,codex,opencode,hermes,openclaw,cursor,antigravity,cline,kimi,qwen,grok,copilot,pi,zed,kilocode,commandcode,micode,minimax,zcode,kiro,codebuddy,workbuddy,proma,qodercn,reasonix,dsh,cherrystudio,lmstudio,unsloth'
   );
 });
 
@@ -64,8 +64,8 @@ test('derived DEFAULT_CLIENTS keeps the existing default-tracked CSV', () => {
 });
 
 test('derived PARSE_LOCAL_CLIENTS still lists exactly the local adapters', () => {
-  assert.deepEqual([...PARSE_LOCAL_CLIENTS], ['proma', 'qodercn']);
-  assert.deepEqual([...LOCALLY_PARSED_CLIENT_IDS], ['proma', 'qodercn']);
+  assert.deepEqual([...PARSE_LOCAL_CLIENTS], ['minimax', 'proma', 'qodercn']);
+  assert.deepEqual([...LOCALLY_PARSED_CLIENT_IDS], ['minimax', 'proma', 'qodercn']);
 });
 
 test('default-tracked clients are a subset of the catalog, in catalog order', () => {

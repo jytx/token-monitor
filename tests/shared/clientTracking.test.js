@@ -57,6 +57,7 @@ test('KNOWN_CLIENTS is a superset of DEFAULT_CLIENTS and still includes opt-in m
   const known = KNOWN_CLIENTS.split(',');
   assert.ok(known.includes('micode'), 'micode must remain a known client');
   assert.ok(known.includes('qodercn'), 'qodercn must remain a known client');
+  assert.ok(known.includes('minimax'), 'minimax must remain a known client');
   for (const client of DEFAULT_CLIENTS.split(',')) {
     assert.ok(known.includes(client), `${client} (default-tracked) must also be known`);
   }
@@ -70,7 +71,7 @@ test('KNOWN_CLIENTS is a superset of DEFAULT_CLIENTS and still includes opt-in m
 test('tracked client defaults and README share one display order', () => {
   const known = KNOWN_CLIENTS.split(',');
   assert.deepEqual(readmeTrackedClientIds(), known);
-  assert.deepEqual(DEFAULT_CLIENTS.split(','), known.filter((client) => !['micode', 'qodercn'].includes(client)));
+  assert.deepEqual(DEFAULT_CLIENTS.split(','), known.filter((client) => !['micode', 'qodercn', 'minimax'].includes(client)));
 });
 
 // "default tracked clients are supported by tokscale or a native adapter" —

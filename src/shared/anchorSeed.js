@@ -1,6 +1,6 @@
 'use strict';
 
-const { collectorAnchorTrust, computePeriodWindows, qoderCnDbPathForClients } = require('./collector');
+const { collectorAnchorTrust, computePeriodWindows, qoderCnDbPathForClients, minimaxDbPathsForClients } = require('./collector');
 const { mergePeriods } = require('./usage');
 const { filterReasonixSyntheticSessions } = require('./providers/reasonix/sessionGuard');
 
@@ -24,6 +24,7 @@ function deviceRecordFromAnchor(saved, options = {}) {
     allTimeSince = '',
     projectsEnabled = true,
     qoderCnDbPath: qoderCnDbPathOption,
+    minimaxDbPaths: minimaxDbPathsOption,
     homeDir,
     wslScanEnabled = true,
     wslSupported = false,
@@ -34,7 +35,10 @@ function deviceRecordFromAnchor(saved, options = {}) {
   const qoderCnDbPath = qoderCnDbPathOption === undefined
     ? qoderCnDbPathForClients(clients, { homeDir })
     : qoderCnDbPathOption;
-  const trust = collectorAnchorTrust(saved, { clients, allTimeSince, projectsEnabled, qoderCnDbPath, now });
+  const minimaxDbPaths = minimaxDbPathsOption === undefined
+    ? minimaxDbPathsForClients(clients, { homeDir })
+    : minimaxDbPathsOption;
+  const trust = collectorAnchorTrust(saved, { clients, allTimeSince, projectsEnabled, qoderCnDbPath, minimaxDbPaths, now });
   if (!trust) return null;
   // The seed's own rule, and the one place it is stricter than the collector.
   // A capture time the collector cannot trust only costs it a full scan, but

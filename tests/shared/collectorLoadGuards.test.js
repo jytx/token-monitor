@@ -2936,14 +2936,18 @@ test('smart collection uses native watching and skips idle intervals after start
   }
 });
 
-test('Qoder CN db-shm events are ignored without suppressing real database changes', () => {
-  const { isQoderCnSelfWatchEvent } = freshCollector();
-  const root = path.join(os.tmpdir(), 'QoderCN', 'db');
-  const roots = { qodercn: [root] };
+test('sqlite adapter db-shm events are ignored without suppressing real database changes', () => {
+  const { isSqliteShmSelfWatchEvent } = freshCollector();
+  const qoderRoot = path.join(os.tmpdir(), 'QoderCN', 'db');
+  const minimaxRoot = path.join(os.tmpdir(), '.minimax', 'v2', 'sqlite');
+  const roots = { qodercn: [qoderRoot], minimax: [minimaxRoot] };
 
-  assert.equal(isQoderCnSelfWatchEvent(path.join(root, 'local.db-shm'), roots), true);
-  assert.equal(isQoderCnSelfWatchEvent(path.join(root, 'local.db-wal'), roots), false);
-  assert.equal(isQoderCnSelfWatchEvent(path.join(os.tmpdir(), 'Other', 'local.db-shm'), roots), false);
+  assert.equal(isSqliteShmSelfWatchEvent(path.join(qoderRoot, 'local.db-shm'), roots), true);
+  // minimax 的 sidecar 命名是 *.sqlite-shm，不以 .db-shm 结尾，也必须被过滤。
+  assert.equal(isSqliteShmSelfWatchEvent(path.join(minimaxRoot, 'runtime-state.sqlite-shm'), roots), true);
+  assert.equal(isSqliteShmSelfWatchEvent(path.join(qoderRoot, 'local.db-wal'), roots), false);
+  assert.equal(isSqliteShmSelfWatchEvent(path.join(minimaxRoot, 'runtime-state.sqlite-wal'), roots), false);
+  assert.equal(isSqliteShmSelfWatchEvent(path.join(os.tmpdir(), 'Other', 'local.db-shm'), roots), false);
 });
 
 test('collector preserves Qoder CN while publishing other clients after a bounded SQLite read fails', async () => {

@@ -51,6 +51,7 @@ Token Monitor 對 Token 用量、帳戶額度與 session 明細分別支援：
 | <img src=".github/assets/tools-icon/kilocode.png" width="28" alt="Kilo Code" /> | Kilo Code | VS Code globalStorage tasks（`.../kilocode.kilo-code/tasks/`）—— 僅 Linux 與遠端/WSL | ✅ | — | — |
 | <img src=".github/assets/tools-icon/commandcode.png" width="28" alt="Command Code" /> | Command Code | `~/.commandcode/projects/**/*.jsonl` | ✅ | ✅ | — |
 | <img src=".github/assets/tools-icon/mimo-code.png" width="28" alt="MiMo Code" /> | MiMo Code | `~/.local/share/mimocode/mimocode.db` | ✅ | ✅ | — |
+| <img src=".github/assets/tools-icon/minimax.png" width="28" alt="Minimax" /> | Minimax / MiniMax Code | `~/.minimax/`（`sqlite.db`、`v2/sqlite/runtime-state.sqlite`）+ Minimax API 金鑰查額度 | ✅ | ✅ | — |
 | <img src=".github/assets/tools-icon/zcode.png" width="28" alt="ZCode" /> | ZCode / GLM | `~/.zcode/`（`projects/`、`cli/db/db.sqlite`） | ✅ | ✅ | — |
 | <img src=".github/assets/tools-icon/kiro.png" width="28" alt="Kiro" /> | Kiro | `~/.kiro/sessions/cli/`、Kiro IDE globalStorage 與 `kiro-cli` 資料庫 | ✅ | ✅ | — |
 | <img src=".github/assets/tools-icon/codebuddy.png" width="28" alt="CodeBuddy" /> | CodeBuddy | `~/.codebuddy/projects/` 與 IDE / VS Code 擴充套件日誌 | ✅ | — | — |
@@ -63,7 +64,6 @@ Token Monitor 對 Token 用量、帳戶額度與 session 明細分別支援：
 | <img src=".github/assets/tools-icon/lmstudio.png" width="28" alt="LM Studio" /> | LM Studio | `~/.lmstudio/server-logs/**/*.log` | ✅ | — | — |
 | <img src=".github/assets/tools-icon/unsloth.png" width="28" alt="Unsloth" /> | Unsloth Studio | `~/.unsloth/studio/studio.db` | ✅ | — | — |
 | <img src=".github/assets/tools-icon/openrouter.png" width="28" alt="OpenRouter" /> | OpenRouter | OpenRouter API 金鑰（查詢用量／金鑰上限；獲授權存取 credits 時顯示餘額，官方文件指定 Management 金鑰） | — | ✅ | — |
-| <img src=".github/assets/tools-icon/minimax.png" width="28" alt="Minimax" /> | Minimax | Minimax API 金鑰（透過 Minimax API 查詢 Token Plan 額度） | — | ✅ | — |
 | <img src=".github/assets/tools-icon/volcengine.png" width="28" alt="Volcengine" /> | Volcengine | Ark API key 或火山引擎 AK/SK（透過火山引擎 API 查詢火山方舟 Coding Plan / Agent Plan 額度） | — | ✅ | — |
 | <img src=".github/assets/tools-icon/ollama.png" width="28" alt="Ollama" /> | Ollama | Ollama Cloud cookie（透過 ollama.com/settings 查詢 session／每週用量） | — | ✅ | — |
 | <img src=".github/assets/tools-icon/trae.png" width="28" alt="Trae CN" /> | Trae CN | Trae CN access token（透過 trae.cn 查詢 Trae CN／SOLO credits） | — | ✅ | — |
@@ -89,6 +89,12 @@ Token Monitor 對 Token 用量、帳戶額度與 session 明細分別支援：
 Qoder CN 的 Token 用量來自應用程式本機 SQLite 資料庫，而非 API —— 在 Settings → tools 中啟用（選用，預設關閉）。資料庫路徑依平台自動偵測：macOS `~/Library/Application Support/QoderCN/SharedClientCache/cache/db/local.db`、Windows `%APPDATA%\QoderCN\SharedClientCache\cache\db\local.db`、Linux `~/.config/QoderCN/SharedClientCache/cache/db/local.db` —— 可用 `TOKEN_MONITOR_QODER_CN_DB_PATH` 覆寫。
 
 這是進階本機整合：讀取需要 PATH 上的 `sqlite3` CLI，或內建免 flag 即可用 `node:sqlite` 的 Node 執行環境（Node ≥ 23.4；Electron 元件可能需要 CLI）。讀取失敗會寫入日誌；若已有完整快照，採集器會保留它，而不會以零用量覆蓋。成本依每個對應模型在 models.dev 目錄中的價格估算；Qoder 若變更資料庫 schema，介接器可能失效。
+#### MiniMax Code（本機介接）
+
+MiniMax Code 的 Token 用量來自 CLI 本機的 SQLite 記帳庫，而非 API —— 在 Settings → tools 中啟用（選用，預設關閉）。兩種佈局都會讀取：現行 `~/.minimax/v2/sqlite/runtime-state.sqlite` 與遷移前的 `~/.minimax/sqlite.db`，應用升級後歷史依然完整 —— 可用 `TOKEN_MONITOR_MINIMAX_DB_PATH` 覆寫。
+
+與 Qoder CN 同為進階本機整合：讀取需要 PATH 上的 `sqlite3` CLI，或內建免 flag 即可用 `node:sqlite` 的 Node 執行環境。用量按模型呼叫逐行累計（含大量代理/工具呼叫的一輪會貢獻每一次呼叫），內嵌 pi-agent 框架產生的無模型行歸入「Pi Agent」，成本依 models.dev 目錄估算（v2 記帳庫內建成本恆為 0，不採用）。MiniMax 若變更資料庫 schema，介接器可能失效。
+
 </details>
 
 ## 介面展示
@@ -121,7 +127,7 @@ Qoder CN 的 Token 用量來自應用程式本機 SQLite 資料庫，而非 API 
 
 ### 用量追蹤
 
-- **即時 Token 追蹤**：Claude Code、Codex、Cursor、GitHub Copilot、Antigravity、OpenCode 等 28+ 種 AI 工具，每輪對話後 UI 在數秒內更新（完整清單見上方表格）
+- **即時 Token 追蹤**：Claude Code、Codex、Cursor、GitHub Copilot、Antigravity、OpenCode 等 29+ 種 AI 工具，每輪對話後 UI 在數秒內更新（完整清單見上方表格）
 - **單一 session 明細**：點進 Claude Code、Codex 或 OpenCode 的 session，可看每則提問的 Token 消耗，並展開查看每次回覆的 Token 拆分與用到的工具（開啟時才即時讀取本機 transcript 或資料庫，絕不同步）
 - **快取命中統計**：點擊任何工具或模型，展開查看輸入 Token（快取命中與未命中）、輸出 Token 的詳細分類及命中率百分比
 - **成本與幣別**：Token 數量旁附帶成本；可用 USD、TWD、HKD 或 CNY 顯示，匯率每日自動更新，也可在設定中手動覆寫
