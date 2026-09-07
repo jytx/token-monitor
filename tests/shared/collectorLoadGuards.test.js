@@ -172,6 +172,67 @@ test('watchIgnoreMatcher keeps every direct Tokscale MiMo database variant but p
   }
 });
 
+test('watchIgnoreMatcher bounds OpenClaw to its per-agent usage sources', () => {
+  const root = path.join('.openclaw', 'agents');
+  const tmp = withTmpHome([
+    path.join(root, 'main', 'sessions'),
+    path.join(root, 'main', 'session-sqlite-import-archive'),
+    path.join(root, 'main', 'agent', 'codex-home', 'sessions', '2026', '09', '07'),
+    path.join(root, 'main', 'agent', 'codex-home', 'archived_sessions'),
+    path.join(root, 'main', 'workspace', 'node_modules', 'package', 'cache'),
+    path.join(root, 'main', 'logs')
+  ]);
+  const originalHomedir = os.homedir;
+  os.homedir = () => tmp;
+  try {
+    const { watchIgnoreMatcher, watchPathsForClients } = freshCollector();
+    const agents = path.join(tmp, root);
+    const ignored = watchIgnoreMatcher('openclaw');
+
+    assert.deepEqual(watchPathsForClients('openclaw'), [agents]);
+    assert.equal(typeof ignored, 'function');
+
+    const kept = [
+      agents,
+      path.join(agents, 'main'),
+      path.join(agents, 'main', 'sessions'),
+      path.join(agents, 'main', 'sessions', 'session.jsonl'),
+      path.join(agents, 'main', 'sessions', 'session.jsonl.deleted.123'),
+      path.join(agents, 'main', 'session-sqlite-import-archive'),
+      path.join(agents, 'main', 'session-sqlite-import-archive', 'archive-tier.session.jsonl.imported-123'),
+      path.join(agents, 'main', 'agent'),
+      path.join(agents, 'main', 'agent', 'openclaw-agent.sqlite'),
+      path.join(agents, 'main', 'agent', 'openclaw-agent.sqlite-wal'),
+      path.join(agents, 'main', 'agent', 'openclaw-agent.sqlite-shm'),
+      path.join(agents, 'main', 'agent', 'codex-home'),
+      path.join(agents, 'main', 'agent', 'codex-home', 'sessions'),
+      path.join(agents, 'main', 'agent', 'codex-home', 'sessions', '2026', '09', '07', 'rollout.jsonl'),
+      path.join(agents, 'main', 'agent', 'codex-home', 'archived_sessions'),
+      path.join(agents, 'main', 'agent', 'codex-home', 'archived_sessions', 'rollout.jsonl')
+    ];
+    for (const target of kept) assert.equal(ignored(target), false, target);
+
+    const pruned = [
+      path.join(agents, 'main', 'workspace'),
+      path.join(agents, 'main', 'workspace', 'node_modules'),
+      path.join(agents, 'main', 'workspace', 'node_modules', 'package', 'cache'),
+      path.join(agents, 'main', 'logs'),
+      path.join(agents, 'main', 'logs', 'runtime.log'),
+      path.join(agents, 'main', 'agent', 'runtime'),
+      path.join(agents, 'main', 'agent', 'runtime', 'session.jsonl'),
+      path.join(agents, 'main', 'agent', 'incognito-openclaw-agent.sqlite'),
+      path.join(agents, 'main', 'agent', 'codex-home', 'history.jsonl'),
+      path.join(agents, 'main', 'agent', 'codex-home', 'tmp'),
+      path.join(agents, 'main', 'agent', 'codex-home', 'tmp', 'rollout.jsonl')
+    ];
+    for (const target of pruned) assert.equal(ignored(target), true, target);
+  } finally {
+    os.homedir = originalHomedir;
+    delete require.cache[collectorPath];
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 test('watchIgnoreMatcher bounds OpenCode to its database family and legacy message source', () => {
   const root = path.join('.local', 'share', 'opencode');
   const tmp = withTmpHome([
@@ -1326,15 +1387,22 @@ test('watchPathsForClients watches only Proma data that is currently parsed', ()
   }
 });
 
+// Cursor's cache is a home-relative literal upstream and Antigravity's follows
+// TOKSCALE_CONFIG_DIR, so the two are seeded from different roots on purpose:
+// pointing the override at the Cursor dir must not be what makes Cursor detect.
 test('clientDataDirPresence still detects cursor/antigravity via their cache dirs', () => {
-  const tmp = withTmpHome([]);
+  const tmp = withTmpHome([path.join('.config', 'tokscale', 'cursor-cache')]);
   const configDir = path.join(tmp, 'tokscale-config');
-  fs.mkdirSync(path.join(configDir, 'cursor-cache'), { recursive: true });
   fs.mkdirSync(path.join(configDir, 'antigravity-cache'), { recursive: true });
   const originalHomedir = os.homedir;
   const previousConfigDir = process.env.TOKSCALE_CONFIG_DIR;
+  // The Windows runner exports an absolute HOME, which tokscale's home_dir()
+  // prefers over the profile — point it at the fixture too, or the Cursor probe
+  // would look outside the temp home on that leg only.
+  const previousHome = process.env.HOME;
   os.homedir = () => tmp;
   process.env.TOKSCALE_CONFIG_DIR = configDir;
+  process.env.HOME = tmp;
   try {
     const { clientDataDirPresence } = freshCollector();
     const presence = clientDataDirPresence('cursor,antigravity');
@@ -1344,6 +1412,8 @@ test('clientDataDirPresence still detects cursor/antigravity via their cache dir
     os.homedir = originalHomedir;
     if (previousConfigDir === undefined) delete process.env.TOKSCALE_CONFIG_DIR;
     else process.env.TOKSCALE_CONFIG_DIR = previousConfigDir;
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
     delete require.cache[collectorPath];
     fs.rmSync(tmp, { recursive: true, force: true });
   }
@@ -2260,7 +2330,7 @@ test('cursor sync runs at most once per throttle window across ticks', async () 
   const childProcess = require('node:child_process');
   const originalSpawn = childProcess.spawn;
   childProcess.spawn = recordingSpawn([]);
-  const cursorAuth = require('../../src/shared/cursorAuth');
+  const cursorAuth = require('../../src/shared/providers/cursor/auth');
   const originalReadActiveAccount = cursorAuth.readActiveAccount;
   const originalRunCursorSync = cursorAuth.runCursorSync;
   let syncCalls = 0;
@@ -2291,7 +2361,7 @@ test('forced Cursor sync bypasses signed-out throttling without saved credential
   const childProcess = require('node:child_process');
   const originalSpawn = childProcess.spawn;
   childProcess.spawn = recordingSpawn([]);
-  const cursorAuth = require('../../src/shared/cursorAuth');
+  const cursorAuth = require('../../src/shared/providers/cursor/auth');
   const originalReadActiveAccount = cursorAuth.readActiveAccount;
   const originalRunCursorSync = cursorAuth.runCursorSync;
   let syncCalls = 0;
@@ -2326,7 +2396,7 @@ test('cursor discovery retries after a transient sync failure', async () => {
   const childProcess = require('node:child_process');
   const originalSpawn = childProcess.spawn;
   childProcess.spawn = recordingSpawn([]);
-  const cursorAuth = require('../../src/shared/cursorAuth');
+  const cursorAuth = require('../../src/shared/providers/cursor/auth');
   const originalReadActiveAccount = cursorAuth.readActiveAccount;
   const originalRunCursorSync = cursorAuth.runCursorSync;
   let syncCalls = 0;
@@ -2362,7 +2432,7 @@ test('cursor sync failure metadata reaches client health without stderr or paths
   const childProcess = require('node:child_process');
   const originalSpawn = childProcess.spawn;
   childProcess.spawn = recordingSpawn([]);
-  const cursorAuth = require('../../src/shared/cursorAuth');
+  const cursorAuth = require('../../src/shared/providers/cursor/auth');
   const originalReadActiveAccount = cursorAuth.readActiveAccount;
   const originalRunCursorSync = cursorAuth.runCursorSync;
   cursorAuth.readActiveAccount = () => ({ accessToken: 'token' });
@@ -2401,7 +2471,7 @@ test('cursor sync failure metadata reaches client health without stderr or paths
 test('a Cursor report with implicit sync blocks logout until the report closes', async () => {
   const childProcess = require('node:child_process');
   const originalSpawn = childProcess.spawn;
-  const cursorAuth = require('../../src/shared/cursorAuth');
+  const cursorAuth = require('../../src/shared/providers/cursor/auth');
   const originalReadActiveAccount = cursorAuth.readActiveAccount;
   const originalRunCursorSync = cursorAuth.runCursorSync;
   let reportChild;
@@ -2469,7 +2539,7 @@ test('a targeted tick does not sync an unrelated self-synced client', async () =
   const childProcess = require('node:child_process');
   const originalSpawn = childProcess.spawn;
   childProcess.spawn = recordingSpawn([]);
-  const cursorAuth = require('../../src/shared/cursorAuth');
+  const cursorAuth = require('../../src/shared/providers/cursor/auth');
   const originalReadActiveAccount = cursorAuth.readActiveAccount;
   const originalRunCursorSync = cursorAuth.runCursorSync;
   let syncCalls = 0;
@@ -2881,7 +2951,7 @@ test('collector preserves Qoder CN while publishing other clients after a bounde
   const originalSharedDir = process.env.TOKEN_MONITOR_SHARED_DIR;
   process.env.TOKEN_MONITOR_SHARED_DIR = tmp;
 
-  const qoderCnUsagePath = require.resolve('../../src/shared/qoderCnUsage');
+  const qoderCnUsagePath = require.resolve('../../src/shared/providers/qodercn/usage');
   const qoderCnUsage = require(qoderCnUsagePath);
   const originalRows = qoderCnUsage.collectQoderCnRows;
   const originalPeriods = qoderCnUsage.buildQoderCnPeriods;
@@ -2986,7 +3056,7 @@ test('collector does not reuse persisted Qoder CN periods after the DB path chan
     fullScanAt: new Date(Date.now() - 5 * 60 * 1000).toISOString()
   }));
 
-  const qoderCnUsagePath = require.resolve('../../src/shared/qoderCnUsage');
+  const qoderCnUsagePath = require.resolve('../../src/shared/providers/qodercn/usage');
   const qoderCnUsage = require(qoderCnUsagePath);
   const originalRows = qoderCnUsage.collectQoderCnRows;
   qoderCnUsage.collectQoderCnRows = async () => {
@@ -3032,7 +3102,7 @@ test('collector publishes other clients when Qoder CN fails before the first com
   const originalSharedDir = process.env.TOKEN_MONITOR_SHARED_DIR;
   process.env.TOKEN_MONITOR_SHARED_DIR = tmp;
 
-  const qoderCnUsagePath = require.resolve('../../src/shared/qoderCnUsage');
+  const qoderCnUsagePath = require.resolve('../../src/shared/providers/qodercn/usage');
   const qoderCnUsage = require(qoderCnUsagePath);
   const originalRows = qoderCnUsage.collectQoderCnRows;
   let qoderCnReads = 0;
@@ -3084,7 +3154,7 @@ test('collector publishes live periods when only Qoder CN history read fails', a
   const originalSharedDir = process.env.TOKEN_MONITOR_SHARED_DIR;
   process.env.TOKEN_MONITOR_SHARED_DIR = tmp;
 
-  const qoderCnUsagePath = require.resolve('../../src/shared/qoderCnUsage');
+  const qoderCnUsagePath = require.resolve('../../src/shared/providers/qodercn/usage');
   const qoderCnUsage = require(qoderCnUsagePath);
   const originalRows = qoderCnUsage.collectQoderCnRows;
   const originalHistory = qoderCnUsage.buildQoderCnHistoryGraph;
@@ -3169,7 +3239,7 @@ test('smart collection coalesces watch events into one targeted interval tick', 
   const originalSpawn = childProcess.spawn;
   const calls = [];
   childProcess.spawn = recordingSpawn(calls);
-  const cursorAuth = require('../../src/shared/cursorAuth');
+  const cursorAuth = require('../../src/shared/providers/cursor/auth');
   const originalRunCursorSync = cursorAuth.runCursorSync;
   cursorAuth.runCursorSync = async () => {};
 
@@ -3328,7 +3398,7 @@ test('smart collection retries a failed activity scan on the next interval', asy
     });
     return child;
   };
-  const cursorAuth = require('../../src/shared/cursorAuth');
+  const cursorAuth = require('../../src/shared/providers/cursor/auth');
   const originalRunCursorSync = cursorAuth.runCursorSync;
   cursorAuth.runCursorSync = async () => {};
 
