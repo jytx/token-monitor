@@ -45,7 +45,7 @@
     { id: 'commandcode', label: 'Command Code' },
     { id: 'mimo', label: 'MiMo' },
     { id: 'minimax', label: 'Minimax' },
-    { id: 'zai', label: 'GLM' },
+    { id: 'zai', label: 'GLM', settingsLabel: 'Z.ai / GLM' },
     { id: 'zaiteam', label: 'GLM Team' },
     { id: 'kiro', label: 'Kiro' },
     { id: 'workbuddy', label: 'WorkBuddy' },
