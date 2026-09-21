@@ -24,6 +24,8 @@ const path = require('node:path');
 const { promisify } = require('node:util');
 const execFileAsync = promisify(execFile);
 
+const { recoverMinimaxModels } = require('./modelRecovery');
+
 const MINIMAX_V2_DB_RELATIVE = path.join('.minimax', 'v2', 'sqlite', 'runtime-state.sqlite');
 const MINIMAX_V1_DB_RELATIVE = path.join('.minimax', 'sqlite.db');
 // 两代布局各一张表，列名相同；探测到哪张读哪张，探测失败不缓存（下次重试）。
@@ -242,7 +244,8 @@ async function collectMinimaxRows(options) {
   for (const dbPath of dbPaths) {
     if (!options.readDbRows && !fs.existsSync(dbPath)) continue;
     const source = sourceId(dbPath);
-    const dbRows = await readMinimaxDbRows(dbPath, { ...options, dbPaths: undefined });
+    let dbRows = await readMinimaxDbRows(dbPath, { ...options, dbPaths: undefined });
+    dbRows = await applyMinimaxModelRecovery(dbPath, dbRows, options);
     for (const dbRow of dbRows) {
       const row = normalizeMinimaxDbRow(dbRow, source);
       if (row) rows.push(row);
@@ -252,6 +255,37 @@ async function collectMinimaxRows(options) {
   const unique = new Map();
   for (const row of rows) unique.set(row.messageId, row);
   return [...unique.values()];
+}
+
+// 2026-08 中旬起 MiniMax Code 的 token_usage 不再落 model 值（改版行为），
+// 直接聚合会把模型维度全部归到占位名 'Pi Agent'。真实模型名在同库消息表
+// 的 context_usage_telemetry 里，按 turn_id 关联回填；找回失败保持原值
+// （占位名），不影响主读成败。仅当存在空模型行时才发起找回查询。
+async function applyMinimaxModelRecovery(dbPath, dbRows, options) {
+  const emptyModelTurns = new Set();
+  for (const row of dbRows) {
+    const model = String(row?.model || '').trim();
+    if (!model) {
+      const turnId = String(row?.turn_id || '').trim();
+      if (turnId) emptyModelTurns.add(turnId);
+    }
+  }
+  if (emptyModelTurns.size === 0) return dbRows;
+  const recovered = await recoverMinimaxModels({
+    dbPath,
+    turnIds: [...emptyModelTurns],
+    execFile: options.execFile,
+    requireFn: options.requireFn,
+    logger: options.logger
+  });
+  if (recovered.size === 0) return dbRows;
+  return dbRows.map((row) => {
+    const model = String(row?.model || '').trim();
+    if (model) return row;
+    const turnId = String(row?.turn_id || '').trim();
+    const found = recovered.get(turnId);
+    return found ? { ...row, model: found } : row;
+  });
 }
 
 // 定价由调用方通过 pricingByModel 注入（collector 的 resolveModelPricing，
