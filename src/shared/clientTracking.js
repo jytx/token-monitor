@@ -22,7 +22,13 @@ const LEGACY_CLIENT_ID_ALIASES = Object.freeze({
   kilocode: 'kilo',
   'devin-cli': 'devin',
   'devin-desktop': 'devin',
-  micode: 'mimo'
+  micode: 'mimo',
+  // dev 分支退役的自采通道 id：旧版把 `minimax` 写进过 settings.clients，
+  // 而 tokscale 只认 `mcode`。非法 id 会让整个 --client CSV 被 tokscale
+  // 拒绝（exit 2），所有客户端一个 token 都采不到，必须在读取时折算。
+  // 只映射 tracked 客户端 CSV，不碰 history.js 的用量 vendor id——
+  // 归档里的旧 `minimax` 行仍按原 id 展示（NON_CATALOG_CLIENT_LABELS）。
+  minimax: 'mcode'
 });
 
 function normalizeTrackedClientId(value) {
