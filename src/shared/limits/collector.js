@@ -155,11 +155,6 @@ function providerPhysicalBoundMs(provider, options = {}, deps = {}) {
     ].some((key) => String(options.limitRefreshScope[key] || '').trim())
       ? 1
       : Math.max(1, managed.length + 1);
-  } else if (provider === 'mimo') {
-    const managed = Array.isArray(options.mimoManagedAccounts || deps.mimoManagedAccounts)
-      ? (options.mimoManagedAccounts || deps.mimoManagedAccounts)
-      : [];
-    jobs = options.limitRefreshScope?.provider === 'mimo' ? 1 : Math.max(1, managed.length);
   } else if (provider === 'minimax' || provider === 'deepseek' || provider === 'zai') {
     // apiKeyAccounts 通用层的三家（minimax/deepseek/zai）：探测预算随账号
     // 数放大；账号级 scope 命中时只按一份发放。
@@ -227,7 +222,11 @@ async function collectLimitsOnce(options = {}, deps = {}) {
   const selectedProviders = parseLimitProviders(options.limitProviders ?? options.providers)
     .filter((provider) => !scope?.provider || provider === scope.provider);
   for (const provider of selectedProviders) {
-    providers.push(...await probeLimitProvider(provider, options, {}, deps));
+    // Runtime-only identity removals are consumed by LimitsRuntime. A one-shot
+    // normalized snapshot has no previous identity state to remove and must not
+    // publish the marker as provider data.
+    providers.push(...(await probeLimitProvider(provider, options, {}, deps))
+      .filter((row) => row?.removed !== true));
   }
   return normalizeLimitsSummary({ updatedAt: nowIso(nowMs), refreshMs, providers });
 }

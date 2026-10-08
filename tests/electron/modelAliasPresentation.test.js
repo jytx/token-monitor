@@ -11,6 +11,20 @@ const {
 } = require('../../src/electron/modelAliasPresentation');
 
 const aliases = { 'anthropic/claude-opus-5': 'claude-opus-5' };
+
+test('model aliases keep unpriced attribution attached to the displayed model', () => {
+  const today = {
+    totalTokens: 100, costUsd: 0, unpricedTokens: 100,
+    models: { 'anthropic/claude-opus-5': 40, 'claude-opus-5': 60 },
+    modelUnpricedTokens: { 'anthropic/claude-opus-5': 40, 'claude-opus-5': 60 },
+    clientModelUnpricedTokens: { codex: { 'anthropic/claude-opus-5': 40, 'claude-opus-5': 60 } }
+  };
+  const projected = projectModelAliasStats({ periods: { today } }, aliases).periods.today;
+  assert.deepEqual(projected.modelUnpricedTokens, { 'claude-opus-5': 100 });
+  assert.deepEqual(projected.clientModelUnpricedTokens, { codex: { 'claude-opus-5': 100 } });
+  assert.equal(projected.unpricedTokens, 100);
+  assert.equal(today.modelUnpricedTokens['anthropic/claude-opus-5'], 40, 'presentation does not mutate source attribution');
+});
 const period = {
   totalTokens: 100, costUsd: 7, clients: { claude: 60, opencode: 40 }, clientCosts: { claude: 3, opencode: 4 },
   models: { 'anthropic/claude-opus-5': 40, 'claude-opus-5': 30, 'gpt-5.5-pro': 30 },
@@ -24,6 +38,27 @@ const period = {
   sessions: { s1: { client: 'claude', sessionId: 's1', totalTokens: 40, costUsd: 2, models: { 'anthropic/claude-opus-5': 40 }, modelCosts: { 'anthropic/claude-opus-5': 2 } } },
   projects: { p1: { projectId: 'p1', models: { 'anthropic/claude-opus-5': 40, 'claude-opus-5': 30 } } }
 };
+
+test('model throughput aliases sum matched raw counters for each device and preserve no-op identity', () => {
+  const modelThroughput = { 'anthropic/claude-opus-5': { timedTokens: 100, timedOutputTokens: 40, timedDurationMs: 1000 },
+    'claude-opus-5': { timedTokens: 200, timedOutputTokens: 20, timedDurationMs: 2000 } };
+  const today = { modelThroughput };
+  const stats = { periods: { today }, devices: [{ deviceId: 'a', periods: { today } }] };
+  const before = structuredClone(stats);
+  for (const [settings, options] of [[aliases, {}], [{}, { grouping: 'duplicates' }]]) {
+    const projected = projectModelAliasStats(stats, settings, options);
+    for (const value of [projected.periods.today, projected.devices[0].periods.today]) {
+      assert.deepEqual(value.modelThroughput, { 'claude-opus-5': { timedTokens: 300, timedOutputTokens: 60, timedDurationMs: 3000 } });
+      const { tokenRatePerSecond } = require('../../src/electron/renderer/tokenRatePresentation');
+      assert.equal(tokenRatePerSecond(value.modelThroughput['claude-opus-5']), 20, 'sum counters before dividing');
+    }
+  }
+  assert.deepEqual(stats, before);
+  assert.strictEqual(projectModelAliasStats(stats, {}).periods.today, today);
+  const noMatch = projectModelAliasStats(stats, { absent: 'other' });
+  assert.strictEqual(noMatch.periods.today.modelThroughput, modelThroughput);
+  assert.strictEqual(noMatch.devices, stats.devices);
+});
 
 test('empty or malformed alias settings are a no-op until automatic grouping is on', () => {
   const stats = { periods: { today: period } };

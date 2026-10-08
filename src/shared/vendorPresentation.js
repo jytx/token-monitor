@@ -55,7 +55,6 @@
     { id: 'commandcode', color: '#8C4EDD', widgetColor: '#9D66E7' },
     { id: 'mimo', color: '#000000', icon: 'xiaomi', widgetInk: true },
     { id: 'muse', color: '#0866FF', icon: 'meta' },
-    { id: 'minimax', color: '#f23f5d' },
     { id: 'zcode', color: '#000000', icon: 'zai', widgetInk: true },
     { id: 'kiro', color: '#9046FF', widgetColor: '#A66AFF' },
     { id: 'codebuddy', color: '#6C4DFF', widgetColor: '#8064FF' },
@@ -69,6 +68,7 @@
     { id: 'unsloth', color: '#40B85A' },
     { id: 'devin', color: '#000000', widgetInk: true },
     { id: 'fx', color: '#000000', widgetInk: true },
+    { id: 'mcode', color: '#f23f5d', icon: 'minimax' },
     // Not tracked clients: model vendors and limits providers. A vendor shares
     // the colour of the client it names (moonshot/kimi, zai/zaiteam, xai/grok).
     { id: 'openrouter', label: 'OpenRouter', color: '#6566F1' },
@@ -83,6 +83,7 @@
     { id: 'zaiteam', label: 'GLM Team', color: '#000000', icon: 'zai', widgetInk: true },
     { id: 'cohere', label: 'Cohere', color: '#39594d', widgetColor: '#66937D' },
     { id: 'xiaomi', label: 'Xiaomi', color: '#000000', widgetInk: true },
+    { id: 'minimax', label: 'MiniMax', color: '#f23f5d' },
     { id: 'doubao', label: 'Doubao', color: '#1E37FC', widgetColor: '#5064FF' },
     { id: 'hunyuan', label: 'Hunyuan', color: '#0053E0', widgetColor: '#277DE3' },
     { id: 'volcengine', label: 'Volcengine', color: '#006EFF', widgetColor: '#2A88FF' },

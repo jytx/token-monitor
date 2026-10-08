@@ -49,7 +49,6 @@
     { id: 'zed', label: 'Zed' },
     { id: 'commandcode', label: 'Command Code' },
     { id: 'mimo', label: 'Xiaomi MiMo' },
-    { id: 'minimax', label: 'Minimax' },
     { id: 'zai', label: 'GLM', settingsLabel: 'Z.ai / GLM' },
     { id: 'zaiteam', label: 'GLM Team' },
     { id: 'kiro', label: 'Kiro' },
@@ -57,6 +56,7 @@
     { id: 'qoder', label: 'Qoder' },
     { id: 'deepseek', label: 'DeepSeek' },
     { id: 'devin', label: 'Devin' },
+    { id: 'minimax', label: 'Minimax' },
     { id: 'typesafe', label: 'TypeSafe' },
     { id: 'openrouter', label: 'OpenRouter' },
     { id: 'volcengine', label: 'Volcengine' },
@@ -78,7 +78,8 @@
     droid: 'factory',
     zcode: 'zai',
     qodercn: 'qoder',
-    dsh: 'deepseek'
+    dsh: 'deepseek',
+    mcode: 'minimax'
   });
 
   const LIMIT_PROVIDER_ID_SET = new Set(LIMIT_PROVIDER_IDS);

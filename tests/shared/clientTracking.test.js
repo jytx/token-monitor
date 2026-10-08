@@ -18,7 +18,10 @@ function readmeTrackedClientIds() {
     deepseek: 'dsh',
     'hermes-agent': 'hermes',
     xai: 'grok',
-    qoder: 'qodercn'
+    qoder: 'qodercn',
+    // The limits-only Minimax row has no usage column, so only MiniMax Code's
+    // row reaches this map.
+    minimax: 'mcode'
   };
   return fs.readFileSync(path.join(rootDir, 'README.md'), 'utf8')
     .split('\n')
@@ -39,7 +42,7 @@ test('clientsCsvForSetting uses defaults only for missing settings', () => {
 
 test('default tracked clients include current tokscale-supported tools', () => {
   const clients = DEFAULT_CLIENTS.split(',');
-  for (const client of ['cline', 'amp', 'droid', 'kimi', 'qwen', 'grok', 'copilot', 'pi', 'zed', 'kilo', 'commandcode', 'muse', 'zcode', 'kiro', 'codebuddy', 'workbuddy', 'reasonix', 'dsh', 'cherrystudio', 'lmstudio', 'unsloth', 'devin', 'fx']) {
+  for (const client of ['cline', 'amp', 'droid', 'kimi', 'qwen', 'grok', 'copilot', 'pi', 'zed', 'kilo', 'commandcode', 'muse', 'zcode', 'kiro', 'codebuddy', 'workbuddy', 'reasonix', 'dsh', 'cherrystudio', 'lmstudio', 'unsloth', 'devin', 'fx', 'mcode']) {
     assert.ok(clients.includes(client), `${client} should be tracked by default`);
   }
 });
@@ -60,7 +63,6 @@ test('KNOWN_CLIENTS is a superset of DEFAULT_CLIENTS and still includes opt-in q
   const known = KNOWN_CLIENTS.split(',');
   assert.ok(known.includes('mimo'), 'mimo must remain a known client');
   assert.ok(known.includes('qodercn'), 'qodercn must remain a known client');
-  assert.ok(known.includes('minimax'), 'minimax must remain a known client');
   for (const client of DEFAULT_CLIENTS.split(',')) {
     assert.ok(known.includes(client), `${client} (default-tracked) must also be known`);
   }

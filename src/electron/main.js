@@ -26,6 +26,7 @@ const motionPreferenceApi = require('./motionPreference');
 const { clearBackgroundImage, getBackgroundImage, importBackgroundImage } = require('./backgroundImage');
 const { createClientSourceIpcHandlers } = require('./clientSourceIpc');
 const { createClaudeWebFetch } = require('./providers/claude/webFetch');
+const { createMimoExchangeFetch } = require('./providers/mimo/exchangeFetch');
 const { runAntigravityOAuthLogin } = require('./providers/antigravity/oauthLogin');
 const antigravityOAuth = require('../shared/providers/antigravity/oauth');
 const {
@@ -58,9 +59,19 @@ const electronWorkbuddyLocalAuth = createWorkbuddyLocalAuth({
 // `deps.fetch` — see limits/fetch.js for why the branch and the request options
 // are what they are. Probes that build their own transport inherit neither
 // branch: cursorProbe and antigravityProbe on node:https, Claude Web on the
-// claudeWebFetch above, the CLI fallbacks on a spawned binary.
+// claudeWebFetch above, the CLI fallbacks on a spawned binary, and MiMo's
+// exchange on the mimoExchangeFetch below, which keeps undici for the per-hop
+// request it needs but still asks Chromium which proxy to use.
 function electronLimitsFetch() {
   return createElectronLimitsFetch({ net, env: process.env });
+}
+
+// Lazy because `session.defaultSession` only exists once the app is ready, and
+// process-wide because the transport caches one proxy agent per proxy URL.
+let mimoExchangeFetch = null;
+function ensureMimoExchangeFetch() {
+  if (!mimoExchangeFetch) mimoExchangeFetch = createMimoExchangeFetch({ session: session.defaultSession });
+  return mimoExchangeFetch;
 }
 
 // Settings-side provider probes take the same transport as the collector's.
@@ -68,7 +79,7 @@ function electronLimitsFetch() {
 // global fetch refuses to save an account on exactly the machines this
 // transport exists for.
 function electronProviderDeps(deps = {}) {
-  return { ...deps, fetch: electronLimitsFetch() };
+  return { ...deps, fetch: electronLimitsFetch(), mimoExchangeFetch: ensureMimoExchangeFetch() };
 }
 const {
   DEFAULT_CLIENTS,
@@ -79,7 +90,9 @@ const {
 const { seedSplitClients } = require('../shared/clientIdentitySplits');
 const {
   clientDiagnosticRoots,
+  getTokscaleStatus,
   lookupModelPricing,
+  pricingFingerprint,
   normalizeHistoryIntervalMs,
   visibleDiagnosticRoots
 } = require('../shared/collector');
@@ -89,14 +102,18 @@ const {
 } = require('../shared/providers/antigravity/selfSync');
 const { deviceRecordFromAnchor } = require('../shared/anchorSeed');
 const { sendWhenRendererReady } = require('./deferredWindowSend');
-const { actionWindowForEvent, handoffWindow, showWindow } = require('./windowLifecycle');
+const { actionWindowForEvent, activateWindowAction, handoffWindow, showWindow } = require('./windowLifecycle');
 const { applyInitialLimitProviderSeed } = require('./initialLimitProviderSeed');
+const { applyCodexAdditionalLimitsMigration } = require('./codexAdditionalLimitsMigration');
 const { createDeviceRuntime } = require('../shared/usage/deviceRuntime');
 const { externalAgentActive } = require('../shared/usage/agentPid');
 const { createDiagnosticJournal } = require('../shared/diagnosticJournal');
 const { createDiagnosticReportGenerator } = require('./diagnostics');
 const { createDiagnosticSnapshotBuilder, diagnosticStreamDetailCode, selectLocalDeviceRecord } = require('./diagnosticSnapshot');
 const { customPricingPath } = require('../shared/tokscaleConfig');
+const { normalizeSharedSyncValue } = require('../shared/syncContent');
+const { createSyncContentRuntime, normalizeSyncContentState, sameDestination } = require('./syncContentRuntime');
+const { createSyncContentCredentialQueue } = require('./syncContentCredentials');
 const { applyCustomPricing, normalizeCustomPricingSetting } = require('../shared/tokscaleCustomPricing');
 const {
   normalizeModelAliases,
@@ -116,6 +133,7 @@ const {
 } = require('../shared/limits/collector');
 const { createCursorUsageEventIndex } = require('../shared/providers/cursor/usageEvents');
 const { limitProviderUrlAllowed } = require('../shared/limits/accounts');
+const { normalizeLimitProviderHiddenItems } = require('../shared/limits/usageItems');
 const {
   accountFieldProjection,
   accountStatusProjection,
@@ -163,15 +181,9 @@ const {
 const {
   defaultHomeModulePreferences,
   normalizeHiddenHomeModules,
+  normalizeHomeLimitDisplayMode,
   normalizeHomeModuleOrder
 } = require('./renderer/homeModulePreferences');
-const {
-  checkNpmForNewer,
-  cleanupStaleStaging,
-  downloadFromNpm,
-  getTokscaleStatus,
-  resetToBundled
-} = require('../shared/tokscaleUpdater');
 const {
   appUpdateInstallSupport,
   classifyAppUpdateError,
@@ -262,17 +274,15 @@ const {
   MIMO_PLATFORM_CONSOLE_URL,
   createMimoManagedAccount,
   fetchMimoLimits,
-  normalizeMimoCookieHeader
+  normalizeMimoCookieHeader,
+  withDetectedMimoAccount
 } = require('../shared/providers/mimo/limits');
 const { createApiKeyAccountController } = require('./apiKeyAccountControllers');
 const { fetchDeepSeekLimits } = require('../shared/providers/deepseek/limits');
 const { fetchZaiLimits } = require('../shared/providers/zai/limits');
 const { fetchMinimaxLimits } = require('../shared/providers/minimax/limits');
-const {
-  createManagedAccountLifecycle,
-  normalizeManagedAccountMeta,
-  registerManagedAccountIpc
-} = require('./managedAccounts');
+const { normalizeManagedAccountMeta } = require('./managedAccounts');
+const { createMimoAccountMetadataReader } = require('./providers/mimo/accountMetadata');
 const { deviceHistoryRevision, historyPreview, historyRevision } = require('../shared/history');
 const { completeHistorySource, resolveCompleteHistory, resolveCompleteHistoryWithDevices } = require('./historySource');
 const { fixedPeriodHistoryMeta } = require('./fixedPeriodHistory');
@@ -339,6 +349,7 @@ const {
   createStatsPublicationBatcher,
   rendererStats
 } = require('./statsPublisher');
+const { withoutSessionTitleStats, withoutSessionTitles } = require('./sessionTitleDisplay');
 const { createSseBlockReader, parseSseBlock } = require('./sseEventReader');
 const { createSyncUploadScheduler, normalizeSyncUploadIntervalMs } = require('./syncUploadScheduler');
 const { createLatestWinsReconciler } = require('./latestWinsReconciler');
@@ -402,10 +413,12 @@ const { applyWindowsChrome } = require('./windowsChrome');
 const { canUseEdgeDock, createEdgeDockController, edgeDockSupported } = require('./edgeDock/controller');
 const { createFullScreenProbe } = require('./edgeDock/fullScreenProbe');
 const {
+  normalizeEdgeDockCustomScale,
   normalizeEdgeDockDisplayId,
   normalizeEdgeDockMode,
   normalizeEdgeDockOffset,
-  normalizeEdgeDockSide
+  normalizeEdgeDockSide,
+  normalizeEdgeDockSize
 } = require('./edgeDock/geometry');
 const { buildEdgeDockCells } = require('./renderer/edgeDock/presentation');
 const { DERIVED_PERIODS: EDGE_DOCK_DERIVED_PERIODS, normalizeEdgeDockItems } = require('./renderer/edgeDock/items');
@@ -548,6 +561,8 @@ function defaultSettings() {
     // to a random secret generated in startEmbeddedHub() if env is empty.
     hubHostSecret: process.env.TOKEN_MONITOR_SECRET || '',
     secret: process.env.TOKEN_MONITOR_SECRET || '',
+    hubSyncSessionTitles: parseBoolean(process.env.TOKEN_MONITOR_SYNC_SESSION_TITLES, false),
+    syncContentState: normalizeSyncContentState(null),
     windowBehavior,
     alwaysOnTop: windowBehavior === 'floating',
     keepAboveTaskbar: false,
@@ -575,9 +590,11 @@ function defaultSettings() {
     // `used` is what the Sessions view and this app's own readouts show, while
     // the clients' default footers tend to lead with what is left.
     sessionContextMetric: 'used',
+    sessionTitlesEnabled: true,
     periodMonthMode: 'month',
     themeColors: {},
     vendorColors: {},
+    textSize: 'standard',
     interfaceFontFamily: '',
     displayFontFamily: fontSettingsApi.DEFAULT_DISPLAY_FONT,
     floatingBubbleEnabled: false,
@@ -586,20 +603,26 @@ function defaultSettings() {
     floatingBubbleCustomLayout: createDefaultTrayLayout(),
     floatingBubbleBounds: null,
     edgeDockEnabled: false,
+    edgeDockRefreshEnabled: false,
+    edgeDockRunningIndicatorEnabled: true,
     edgeDockMode: 'autoHide',
     edgeDockHaptic: true,
     edgeDockWarnColors: false,
     edgeDockMacBackdrop: 'inherit',
+    edgeDockSize: 'medium',
+    edgeDockCustomScale: 1,
     edgeDockSide: 'right',
     edgeDockOffset: null,
     edgeDockDisplayId: null,
     edgeDockItems: null,
-    lastViewState: { period: 'today', breakdown: 'tool' },
+    lastViewState: { period: 'today', breakdown: 'home' },
     discordRpcEnabled: false,
     deviceId: process.env.TOKEN_MONITOR_DEVICE_ID || defaultDeviceId(),
     icloudWriterId: '',
     lastPostedDeviceId: '',
     clients: clientsCsvForSetting(process.env.TOKEN_MONITOR_CLIENTS),
+    codexDotsEnabled: process.env.TOKEN_MONITOR_CODEX_LOCAL_USAGE === '1',
+    codexDotsVisible: true,
     customScanPaths: {},
     clientDisplayOrder: '',
     hiddenClients: '',
@@ -609,6 +632,7 @@ function defaultSettings() {
     homeModuleOrder: defaultHomeModulePreferences().homeModuleOrder,
     hiddenHomeModules: defaultHomeModulePreferences().hiddenHomeModules,
     showHomeLimitBars: false,
+    homeLimitDisplayMode: 'text',
     showHomeLimitProviderNames: false,
     projectsEnabled: parseBoolean(process.env.TOKEN_MONITOR_PROJECTS_ENABLED, true),
     historyEnabled: true,
@@ -635,6 +659,9 @@ function defaultSettings() {
     limitProviderOrder: defaultLimitProviderOrder(),
     homeLimitProviderOrder: '',
     hiddenHomeLimitProviders: '',
+    // Rows of a provider's limits card the user has hidden, as
+    // `{ providerId: [itemId, ...] }` (see shared/limits/usageItems).
+    limitProviderHiddenItems: {},
     homeLimitAccountCount: HOME_LIMIT_ACCOUNT_COUNT_DEFAULT,
     limitsRefreshMode: normalizeLimitsRefreshMode(process.env.TOKEN_MONITOR_LIMITS_REFRESH_MODE),
     limitsRefreshMs: normalizeLimitsRefreshMs(process.env.TOKEN_MONITOR_LIMITS_REFRESH_MS),
@@ -862,6 +889,7 @@ function credentialProbeDeps(renewed = {}) {
 function electronLimitsDeps() {
   return {
     fetch: electronLimitsFetch(),
+    mimoExchangeFetch: ensureMimoExchangeFetch(),
     claudeWebFetch: electronClaudeWebFetch,
     workbuddyFetch: async (url, init = {}, expectedSession = null) => {
       const result = await electronWorkbuddyLocalAuth.request(url, init, expectedSession);
@@ -1234,17 +1262,42 @@ function normalizeMimoManagedAccounts(value) {
   return normalizeManagedAccountMeta(value, []);
 }
 
-function mimoAccountsForRenderer() {
-  return normalizeMimoManagedAccounts(settings?.mimoManagedAccounts).map(({
-    id, accountKey, accountEmail, accountLabel, addedAt, updatedAt, enabled
-  }) => ({ id, accountKey, accountEmail, accountLabel, addedAt, updatedAt, enabled }));
+// Synthetic settings-row id for the session discovered from MiMo Desktop. It is
+// local UI state, not a provider id.
+const MIMO_DETECTED_ACCOUNT_ID = 'mimo-local-session';
+const detectedMimoAccountKey = createMimoAccountMetadataReader();
+
+// Settings lists a detected Desktop identity without retaining its credential.
+function mimoDetectedAccount() {
+  const accountKey = detectedMimoAccountKey();
+  if (!accountKey) return null;
+  return {
+    id: MIMO_DETECTED_ACCOUNT_ID,
+    accountKey,
+    accountEmail: '',
+    accountLabel: '',
+    enabled: true
+  };
 }
 
+function mimoAccountsForRenderer() {
+  const accounts = normalizeMimoManagedAccounts(settings?.mimoManagedAccounts).map(({
+    id, accountKey, accountEmail, accountLabel, addedAt, updatedAt, enabled
+  }) => ({ id, accountKey, accountEmail, accountLabel, addedAt, updatedAt, enabled }));
+  return withDetectedMimoAccount(accounts, mimoDetectedAccount());
+}
+
+// Every saved account is handed over, including one whose credential cannot be
+// read right now: the provider answers that account with its own not-configured
+// row, which keeps the failure on the account it belongs to. Dropping it here
+// instead used to leave the provider with no accounts at all, and a provider with
+// no accounts answers once for the whole lane — which cleared every other
+// account's row with it.
 function mimoManagedAccountsForCollector() {
   return normalizeMimoManagedAccounts(settings?.mimoManagedAccounts).map((account) => ({
     ...account,
     cookieHeader: readMimoCredential(account.id)
-  })).filter((account) => account.cookieHeader);
+  }));
 }
 
 function legacyMimoCredentialPath(id) {
@@ -1282,7 +1335,10 @@ async function addMimoManagedAccount(cookieValue) {
   const accounts = normalizeMimoManagedAccounts(settings?.mimoManagedAccounts);
   const result = createMimoManagedAccount(cookieValue, accounts);
   if (!result.ok) return result;
-  const [validation] = await fetchMimoLimits({ mimoManagedAccounts: [result.account] }, electronProviderDeps());
+  const [validation] = await fetchMimoLimits({
+    mimoManagedAccounts: [result.account],
+    limitRefreshScope: { provider: 'mimo', accountKey: result.account.accountKey }
+  }, credentialProbeDeps());
   if (validation?.status !== 'ok') {
     const errorCode = validation?.status === 'unauthorized'
       ? 'invalidCookie'
@@ -1315,36 +1371,52 @@ async function addMimoManagedAccount(cookieValue) {
   return { ok: true, accounts: mimoAccountsForRenderer() };
 }
 
-// MiMo 删除/启停走共用生命周期（managedAccounts.js）；addAccount 因 cookie
-// 解析、email 回填等供应商差异保留专用实现。
-const mimoAccountLifecycle = createManagedAccountLifecycle({
-  provider: 'mimo',
-  normalizeAccounts: normalizeMimoManagedAccounts,
-  readCredential: readMimoCredential,
-  writeCredential: writeMimoCredential,
-  removeCredential: removeMimoCredential,
-  getAccounts: () => settings?.mimoManagedAccounts,
-  setAccounts: (accounts) => {
-    settings.mimoManagedAccounts = accounts;
-  },
-  persistSettings: () => saveSettings({ throwOnError: true }),
-  broadcastChange: () => {
-    pushSettingsToRenderer();
-    sendMimoAccountsPush();
-  },
-  queueInvalidation: (scope, reason, options) => {
-    void queueLimitInvalidation(scope, reason, options);
+async function removeMimoManagedAccount(id) {
+  const accountId = String(id || '').trim();
+  const accounts = normalizeMimoManagedAccounts(settings.mimoManagedAccounts);
+  const account = accounts.find((entry) => entry.id === accountId);
+  if (!account) return { ok: false, error: 'Account not found' };
+  const previousCookie = readMimoCredential(accountId);
+  if (!removeMimoCredential(accountId)) return { ok: false, error: 'Could not remove stored credential' };
+  settings.mimoManagedAccounts = accounts.filter((entry) => entry.id !== accountId);
+  try {
+    saveSettings({ throwOnError: true });
+  } catch (_) {
+    if (previousCookie) writeMimoCredential(accountId, previousCookie);
+    return { ok: false, error: 'Could not persist account removal' };
   }
-});
+  pushSettingsToRenderer();
+  sendMimoAccountsPush();
+  void queueLimitInvalidation({ provider: 'mimo', accountId, accountKey: account.accountKey }, 'account-removed', {
+    clear: true,
+    refresh: false
+  });
+  return { ok: true, accounts: mimoAccountsForRenderer() };
+}
 
-// ---------- API key 型供应商多账号（minimax / deepseek / zai）----------
-// 三家共用 apiKeyAccountControllers 工厂：settings.<provider>ManagedAccounts
-// 存元数据（含 keySuffix 显示尾号，不含密钥），密钥存 credentials.json 的
-// providers.<provider>.accounts.<id>.apiKey 动态路径；添加/换 key 前先活体
-// 验证（各 fetcher 探测一次）。
+function setMimoManagedAccountEnabled(id, enabled) {
+  const accountId = String(id || '').trim();
+  const accounts = normalizeMimoManagedAccounts(settings.mimoManagedAccounts);
+  const account = accounts.find((entry) => entry.id === accountId);
+  if (!account) return { ok: false, error: 'Account not found' };
+  account.enabled = Boolean(enabled);
+  account.updatedAt = new Date().toISOString();
+  settings.mimoManagedAccounts = accounts;
+  try {
+    saveSettings({ throwOnError: true });
+  } catch (_) {
+    return { ok: false, error: 'Could not persist account state' };
+  }
+  pushSettingsToRenderer();
+  sendMimoAccountsPush();
+  void queueLimitInvalidation({ provider: 'mimo', accountId, accountKey: account.accountKey }, 'account-state', {
+    clear: !account.enabled,
+    refresh: account.enabled
+  });
+  return { ok: true, accounts: mimoAccountsForRenderer() };
+}
 
-// settings 读取侧的元数据归一化（readSettings 在全局 settings 赋值前运行，
-// 不能走 controller，直接用共用归一化函数）。
+
 function normalizeApiKeyAccountsMeta(value) {
   return normalizeManagedAccountMeta(value, ['keySuffix']);
 }
@@ -1974,6 +2046,7 @@ function normalizeLanguageSetting(value, fallback = 'auto') {
   if (lower === 'en' || lower.startsWith('en-')) return 'en';
   if (lower === 'zh-tw' || lower.startsWith('zh-hant') || /-(tw|hk|mo)\b/i.test(raw)) return 'zh-TW';
   if (lower === 'zh-cn' || lower.startsWith('zh-hans') || /-(cn|sg|my)\b/i.test(raw)) return 'zh-CN';
+  if (lower === 'pt' || lower.startsWith('pt-')) return 'pt-BR';
   return LANGUAGE_VALUES.has(raw) ? raw : fallback;
 }
 
@@ -2491,6 +2564,7 @@ function readSettings() {
       merged.hiddenHomeModules = normalizeHiddenHomeModules(saved.hiddenHomeModules, DEFAULT_HOME_MODULE_LIST);
     }
     merged.showHomeLimitBars = parseBoolean(merged.showHomeLimitBars, false);
+    merged.homeLimitDisplayMode = normalizeHomeLimitDisplayMode(merged.homeLimitDisplayMode);
     merged.showHomeLimitProviderNames = parseBoolean(merged.showHomeLimitProviderNames, false);
     merged.codexResetForecastEnabled = parseBoolean(merged.codexResetForecastEnabled, false);
     merged.showCodexAdditionalLimits = parseBoolean(merged.showCodexAdditionalLimits, true);
@@ -2504,6 +2578,7 @@ function readSettings() {
     if (saved.hiddenHomeLimitProviders !== undefined) {
       merged.hiddenHomeLimitProviders = normalizeHiddenLimitProviders(saved.hiddenHomeLimitProviders);
     }
+    merged.limitProviderHiddenItems = normalizeLimitProviderHiddenItems(merged.limitProviderHiddenItems);
     merged.homeLimitAccountCount = normalizeHomeLimitAccountCount(merged.homeLimitAccountCount);
     merged.periodMonthMode = normalizePeriodMonthMode(merged.periodMonthMode);
     if (saved.historyEnabled !== undefined) {
@@ -2518,19 +2593,25 @@ function readSettings() {
     if (saved.wslScanEnabled !== undefined) {
       merged.wslScanEnabled = parseBoolean(saved.wslScanEnabled, true);
     }
+    merged.codexDotsEnabled = parseBoolean(merged.codexDotsEnabled, false);
+    merged.codexDotsVisible = parseBoolean(merged.codexDotsVisible, true);
     merged.collectionMode = normalizeCollectionMode(merged.collectionMode);
     merged.collectionIntervalMs = normalizeCollectionIntervalMs(merged.collectionIntervalMs);
     merged.syncUploadIntervalMs = normalizeSyncUploadIntervalMs(merged.syncUploadIntervalMs);
     merged.heatmapMetric = normalizeHeatmapMetric(merged.heatmapMetric);
     merged.modelRankingMetric = normalizeRankingMetric(merged.modelRankingMetric);
     merged.homeActiveDaysWindow = normalizeHomeActiveDaysWindow(merged.homeActiveDaysWindow);
+    merged.sessionTitlesEnabled = parseBoolean(merged.sessionTitlesEnabled, true);
     merged.sessionContextMetric = normalizeSessionContextMetric(merged.sessionContextMetric);
     merged.reduceMotion = motionPreferenceApi.normalize(merged.reduceMotion);
     merged.showLiveTokenRate = parseBoolean(merged.showLiveTokenRate, false);
     merged.liveTokenRateScope = normalizeLiveTokenRateScope(merged.liveTokenRateScope);
     merged.compactTokenUnits = normalizeCompactTokenUnits(merged.compactTokenUnits);
     merged.modelAliases = normalizeModelAliases(merged.modelAliases);
+    merged.syncContentState = normalizeSyncContentState(merged.syncContentState);
+    merged.hubSyncSessionTitles = parseBoolean(merged.hubSyncSessionTitles, false);
     merged.modelAliasGrouping = normalizeModelAliasGrouping(merged.modelAliasGrouping);
+    merged.textSize = fontSettingsApi.normalizeTextSize(merged.textSize);
     merged.interfaceFontFamily = fontSettingsApi.normalizeFontFamily(merged.interfaceFontFamily);
     merged.displayFontFamily = fontSettingsApi.normalizeFontFamily(merged.displayFontFamily);
     merged.tokenRateMode = normalizeTokenRateMode(merged.tokenRateMode);
@@ -2575,6 +2656,8 @@ function readSettings() {
     merged.floatingBubbleContent = normalizeTrayContent(merged.floatingBubbleContent, 'icon');
     merged.floatingBubbleCustomLayout = normalizeTrayLayout(merged.floatingBubbleCustomLayout);
     merged.edgeDockEnabled = parseBoolean(merged.edgeDockEnabled, false);
+    merged.edgeDockRefreshEnabled = parseBoolean(merged.edgeDockRefreshEnabled, false);
+    merged.edgeDockRunningIndicatorEnabled = parseBoolean(merged.edgeDockRunningIndicatorEnabled, true);
     merged.edgeDockSide = normalizeEdgeDockSide(merged.edgeDockSide);
     merged.edgeDockOffset = normalizeEdgeDockOffset(merged.edgeDockOffset);
     merged.edgeDockDisplayId = normalizeEdgeDockDisplayId(merged.edgeDockDisplayId);
@@ -2582,6 +2665,8 @@ function readSettings() {
     merged.edgeDockHaptic = parseBoolean(merged.edgeDockHaptic, true);
     merged.edgeDockWarnColors = parseBoolean(merged.edgeDockWarnColors, false);
     merged.edgeDockMacBackdrop = normalizeEdgeDockBackdropMode(merged.edgeDockMacBackdrop);
+    merged.edgeDockSize = normalizeEdgeDockSize(merged.edgeDockSize);
+    merged.edgeDockCustomScale = normalizeEdgeDockCustomScale(merged.edgeDockCustomScale);
     merged.edgeDockItems = normalizeEdgeDockItems(merged.edgeDockItems);
     merged.trayCustomLayout = normalizeTrayLayout(merged.trayCustomLayout);
     merged.showTrayProviderBadge = parseBoolean(merged.showTrayProviderBadge, false);
@@ -2635,6 +2720,16 @@ function seedInitialLimitProviders(summary) {
       deviceRuntimeHandle?.reconfigureLimits(electronLimitsConfig());
       pushSettingsToRenderer();
     }
+  });
+}
+
+// Runs on the presented stats rather than this device's record, so a Codex
+// account another device reports carries the switch over too.
+function migrateCodexAdditionalLimits(visibleStats) {
+  return applyCodexAdditionalLimitsMigration(visibleStats, {
+    settings,
+    saveSettings,
+    onPersisted: pushSettingsToRenderer
   });
 }
 
@@ -2891,6 +2986,7 @@ let latestHubStatsIdentity = null;
 let hubModeGeneration = 0;
 let tray = null;
 let latestStats = null;
+let statsPushRevision = 0;
 let macWidgetSnapshotController = null;
 let macWidgetDemand = null;
 let macWidgetPublicationReady = false;
@@ -2918,9 +3014,9 @@ function electronPresentationStats(stats) {
   };
   const aliases = settings?.modelAliases;
   const grouping = settings?.modelAliasGrouping;
-  const key = JSON.stringify([limitOptions, aliases ?? null, grouping ?? null]);
+  const key = JSON.stringify([limitOptions, aliases ?? null, grouping ?? null, settings?.sessionTitlesEnabled !== false]);
   return presentationCache.get(stats, key, () => projectModelAliasStats(
-    projectLimitStatsForDisplay(stats, limitOptions),
+    projectLimitStatsForDisplay(settings?.sessionTitlesEnabled === false ? withoutSessionTitleStats(stats) : stats, limitOptions),
     aliases,
     { grouping }
   ));
@@ -2941,14 +3037,14 @@ function rendererAllTimeSessions(stats) {
   if (!stats) return null;
   const aliases = settings?.modelAliases;
   const grouping = settings?.modelAliasGrouping;
-  const key = JSON.stringify([aliases ?? null, grouping ?? null]);
+  const key = JSON.stringify([aliases ?? null, grouping ?? null, settings?.sessionTitlesEnabled !== false]);
   return allTimeSessionsCache.get(stats, key, () => {
     const complete = completeLocalSyncStats(stats);
     const hubSnapshot = snapshotLocalDevices.get(stats);
     const sessions = hubSnapshot
       ? mergedLocalAllTimeSessions(complete.periods, hubSnapshot.localDevice)
       : complete.periods?.allTime?.sessions || {};
-    return projectModelAliasSessions(stats, sessions, aliases, { grouping });
+    return projectModelAliasSessions(stats, settings?.sessionTitlesEnabled === false ? withoutSessionTitles(sessions) : sessions, aliases, { grouping });
   });
 }
 
@@ -2968,8 +3064,6 @@ const providerTrayIcons = {};
 let registeredWindowToggleShortcut = '';
 let windowToggleShortcutRegistered = false;
 let defaultTrayIcon = null;
-let tokScaleNpmMetadata = null;
-let tokScaleUpdaterBusy = false;
 function getDefaultTrayIcon() {
   if (!defaultTrayIcon) defaultTrayIcon = buildTrayIcon();
   return defaultTrayIcon;
@@ -3192,16 +3286,16 @@ function drainPendingRuntimeActions(runtime) {
   drainPendingUsageClientRefreshes(runtime);
 }
 
-function effectiveHubConfig() {
-  if (settings?.hubMode === 'host') {
+function effectiveHubConfig(sourceSettings = settings) {
+  if (sourceSettings?.hubMode === 'host') {
     return {
-      url: `http://127.0.0.1:${normalizeHubPort(settings.hubHostPort)}`,
-      secret: settings.hubHostSecret || ''
+      url: `http://127.0.0.1:${normalizeHubPort(sourceSettings.hubHostPort)}`,
+      secret: sourceSettings.hubHostSecret || ''
     };
   }
-  if (settings?.hubMode === 'client') {
-    const url = String(settings.hubUrl || '').trim();
-    return { url: url || null, secret: settings.secret || '' };
+  if (sourceSettings?.hubMode === 'client') {
+    const url = String(sourceSettings.hubUrl || '').trim();
+    return { url: url || null, secret: sourceSettings.secret || '' };
   }
   return { url: null, secret: '' };
 }
@@ -3247,21 +3341,33 @@ async function getHubBuildStatus() {
 async function startEmbeddedHub() {
   if (embeddedHub) return embeddedHub;
   embeddedHubError = null;
-  if (!settings.hubHostSecret) {
-    settings.hubHostSecret = generateHubSecret();
-    saveSettings();
-  }
   const port = normalizeHubPort(settings.hubHostPort);
   try {
+    if (!settings.hubHostSecret) {
+      const previous = settings;
+      try {
+        const next = { ...settings, hubHostSecret: generateHubSecret() };
+        getSyncContentRuntime().beforeDestinationChange(syncContentContext(next));
+        next.syncContentState = normalizeSyncContentState(settings.syncContentState);
+        settings = next;
+        saveSettings({ throwOnError: true });
+      } catch (error) {
+        // Restore connection settings without undoing a preflight OFF/journal.
+        settings = { ...previous, syncContentState: normalizeSyncContentState(settings.syncContentState) };
+        throw error;
+      }
+      getSyncContentRuntime().invalidate();
+    }
     const hub = createHub({
       port,
       host: '0.0.0.0',
       secret: settings.hubHostSecret,
+      syncSessionTitles: settings.hubSyncSessionTitles === true,
       dataFile: hubDataFile(),
       logger: { error: (err) => console.log(`[hub] ${err?.message || err}`) }
     });
     await hub.start();
-    embeddedHub = { hub, port };
+    embeddedHub = { hub, port, secret: settings.hubHostSecret };
     console.log(`[hub] listening on 0.0.0.0:${port}`);
     sendHubPush({ type: 'listening', info: getHubInfo() });
     return embeddedHub;
@@ -3337,7 +3443,7 @@ async function deleteDeviceFromCurrentSync(deviceId) {
   if (!target) {
     throw Object.assign(new Error('device_not_found'), { code: 'device_not_found' });
   }
-  if (hubMode === 'icloud' && target.stale !== true) {
+  if (target.stale !== true) {
     throw Object.assign(new Error('device_not_stale'), { code: 'device_not_stale' });
   }
 
@@ -3347,6 +3453,8 @@ async function deleteDeviceFromCurrentSync(deviceId) {
 
 async function postToHub(summary) {
   const { url: hubUrl, secret } = effectiveHubConfig();
+  const uploadIdentity = getSyncContentRuntime().status().identity;
+  const uploadContext = syncContentContext();
   if (!hubUrl) throw new Error('hub not configured');
   const stale = settings.lastPostedDeviceId;
   if (stale && stale !== summary.deviceId) {
@@ -3354,7 +3462,17 @@ async function postToHub(summary) {
     catch (error) { console.log(`[sync] cleanup of old deviceId ${stale} failed: ${error.message}`); }
   }
   const url = `${hubUrl.replace(/\/$/, '')}/api/ingest`;
-  const { response } = await postSyncPayload(fetch, url, {
+  const runtime = getSyncContentRuntime();
+  const syncOptions = await runtime.prepareUpload();
+  if (syncOptions.identity !== uploadIdentity || syncOptions.signal.aborted
+    || syncOptions.identity !== getSyncContentRuntime().status().identity
+    || !sameDestination(uploadContext, syncContentContext())
+    || summary.deviceId !== syncContentContext().deviceId) throw new Error('hub_changed');
+  const fetchForUpload = (target, options) => fetch(target, { ...options, redirect: 'error',
+    signal: AbortSignal.any([syncOptions.signal, AbortSignal.timeout(15_000)]) });
+  const { response } = await postSyncPayload(fetchForUpload, url, {
+    syncSessionTitles: syncOptions.syncSessionTitles,
+    sessionTitleSyncGeneration: syncOptions.sessionTitleSyncGeneration,
     headers: {
       'content-type': 'application/json',
       [HUB_RESPONSE_HEADER]: HUB_RESPONSE_MINIMAL,
@@ -3369,6 +3487,85 @@ async function postToHub(summary) {
     saveSettings();
   }
   return response.json();
+}
+
+let syncContentRuntime = null;
+let applySyncSettingsPatch = null;
+
+function syncContentContext(sourceSettings = settings) {
+  const endpoint = effectiveHubConfig(sourceSettings);
+  return { ...endpoint, mode: sourceSettings?.hubMode, deviceId: sourceSettings?.deviceId || defaultDeviceId() };
+}
+
+function getSyncContentRuntime() {
+  if (syncContentRuntime) return syncContentRuntime;
+  const cleanupCredentials = createSyncContentCredentialQueue(ensureCredentialStore);
+  syncContentRuntime = createSyncContentRuntime({
+    resolveIdentity: cleanupCredentials.resolveIdentity,
+    loadCleanupContexts: cleanupCredentials.read,
+    saveCleanupContext: cleanupCredentials.save,
+    removeCleanupContext: cleanupCredentials.remove,
+    getContext: syncContentContext,
+    getState: () => settings?.syncContentState,
+    saveState: (next) => {
+      const previous = settings;
+      settings = { ...settings, syncContentState: next };
+      try {
+        // Sync policy changes never alter credentials. Persist OFF independently
+        // so a failed private journal write cannot block the preference journal.
+        writePrivateJsonAtomic(settingsPath, stripCredentialSettings(settings));
+        persistedSettingsSnapshot = cloneSettingsSnapshot(settings);
+      } catch (error) { settings = previous; throw error; }
+    },
+    getLocalValue: (kind) => kind === 'modelAliases'
+      ? { modelAliases: settings.modelAliases, modelAliasGrouping: settings.modelAliasGrouping }
+      : settings.customModelPricing,
+    applyLocalValue: (kind, value) => {
+      if (!applySyncSettingsPatch) throw new Error('settings_not_ready');
+      return applySyncSettingsPatch(kind === 'modelAliases' ? value : { customModelPricing: value });
+    },
+    normalizeValue: normalizeSharedSyncValue,
+    request: async (context, pathname, method, body) => {
+      // The embedded Hub uses the same authenticated protocol in-process. Its
+      // own usage must keep working when outbound loopback traffic is blocked.
+      if (context.mode === 'host' && embeddedHub
+        && ((context.url === `http://127.0.0.1:${embeddedHub.port}` && context.secret === embeddedHub.secret)
+          // Every embedded host generation shares this app's hubDataFile. Old
+          // host journals may scrub that same store after port/secret rotation;
+          // they cannot read or admit a new generation through this exception.
+          || (method === 'PUT' && /^\/api\/sync\/titles\//.test(pathname) && body?.enabled === false))) {
+        const hub = embeddedHub.hub;
+        try {
+          if (pathname === '/api/sync/content') return { status: 200, body: hub.getSyncContent() };
+          const match = pathname.match(/^\/api\/sync\/settings\/(modelAliases|customPricing)$/);
+          if (match) return { status: 200, body: { ok: true, ...(method === 'PUT'
+            ? hub.setSyncSettings(match[1], body) : hub.getSyncSettings(match[1])) } };
+          const titleMatch = pathname.match(/^\/api\/sync\/titles\/([^/]+)$/);
+          if (titleMatch && method === 'PUT') return { status: 200,
+            body: { ok: true, ...hub.setSyncTitlePolicy(decodeURIComponent(titleMatch[1]), body.enabled) } };
+          return { status: 404, body: null };
+        } catch (error) {
+          return { status: error.code === 'stale_write' ? 409 : error.code === 'forbidden' ? 403 : 400,
+            body: error.current || null };
+        }
+      }
+      const response = await fetch(`${context.url.replace(/\/$/, '')}${pathname}`, {
+        method, redirect: 'error',
+        headers: { 'content-type': 'application/json', ...(context.secret ? { authorization: `Bearer ${context.secret}` } : {}) },
+        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+        signal: AbortSignal.timeout(15_000)
+      });
+      let data;
+      try { data = await response.json(); } catch (_) { data = null; }
+      return { status: response.status, body: data };
+    },
+    onStatus: (status) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        try { mainWindow.webContents.send('syncContent:push', status); } catch (_) {}
+      }
+    }
+  });
+  return syncContentRuntime;
 }
 
 // ---------------------------------------------------------------------------
@@ -4248,12 +4445,20 @@ function startHostCollector() {
       const visibleSummary = summary;
       lastCollectedDevice = { ...visibleSummary, receivedAt: new Date().toISOString() };
       if (!embeddedHub) return;
-      try {
+      const handle = embeddedHub;
+      const uploadIdentity = getSyncContentRuntime().status().identity;
+      const uploadContext = syncContentContext();
+      void (async () => {
+        const options = await getSyncContentRuntime().prepareUpload();
+        if (handle !== embeddedHub || options.identity !== uploadIdentity || options.signal.aborted
+          || options.identity !== getSyncContentRuntime().status().identity
+          || !sameDestination(uploadContext, syncContentContext())
+          || visibleSummary.deviceId !== syncContentContext().deviceId) return;
         const stale = settings.lastPostedDeviceId;
         if (stale && stale !== visibleSummary.deviceId) {
-          embeddedHub.hub.deleteDevice(stale);
+          handle.hub.deleteDevice(stale);
         }
-        const payload = syncPayload(visibleSummary);
+        const payload = syncPayload(visibleSummary, options);
         if (payload.allTimeProjectsOmitted === true) {
           console.log('[host-ingest] all-time project breakdown omitted to reduce the sync snapshot size');
         }
@@ -4262,9 +4467,9 @@ function startHostCollector() {
           settings.lastPostedDeviceId = visibleSummary.deviceId;
           saveSettings();
         }
-      } catch (error) {
+      })().catch((error) => {
         console.log(`[host-ingest] failed: ${error.message}`);
-      }
+      });
     }
   };
   const usageOptions = electronUsageConfig('host-collector');
@@ -4573,7 +4778,13 @@ function sendPush(payload, options = {}) {
   if (payload?.data?.stats) {
     injectLocalDeviceStatus(payload.data.stats);
     latestStats = payload.data.stats;
+    // Client local batches overlay usage on the cached Hub snapshot; they do
+    // not supersede an in-flight read of fresh remote stats.
+    if (!(settings?.hubMode === 'client' && payload.data.reason === 'local')) statsPushRevision += 1;
+    edgeDockManualStats = null;
+    getSyncContentRuntime().notifyStats(latestStats);
     const visibleStats = electronPresentationStats(latestStats);
+    migrateCodexAdditionalLimits(visibleStats);
     rendererPayload = {
       ...payload,
       data: { ...payload.data, stats: rendererSnapshots.stamp(latestStats, rendererStats(visibleStats)) }
@@ -5062,9 +5273,11 @@ function settingsForRenderer() {
   const rendererSettings = { ...settings };
   delete rendererSettings.icloudRetiredDeviceIds;
   delete rendererSettings.icloudWriterId;
+  delete rendererSettings.syncContentState;
   for (const key of rendererOmittedAccountKeys()) delete rendererSettings[key];
   return {
     ...rendererSettings,
+    syncContentStatus: getSyncContentRuntime().status(),
     locale: trayMenuLocale(),
     ...redactedCredentials,
     // On a hub the shared list is the truth; settings.subscriptions is only the
@@ -5207,6 +5420,7 @@ function edgeDockAppearance(rendererSettings = settingsForRenderer()) {
     // every preference that view reads has to reach this renderer as well —
     // otherwise the card silently renders a different page's answer.
     showCodexAdditionalLimits: source.showCodexAdditionalLimits,
+    limitProviderHiddenItems: source.limitProviderHiddenItems,
     showLimitSource: source.showLimitSource,
     codexResetForecastEnabled: source.codexResetForecastEnabled,
     claudePrepaidBalanceEnabled: source.claudePrepaidBalanceEnabled,
@@ -5215,6 +5429,7 @@ function edgeDockAppearance(rendererSettings = settingsForRenderer()) {
     sessionContextMetric: source.sessionContextMetric,
     maskLimitAccountEmails: source.maskLimitAccountEmails,
     edgeDockWarnColors: source.edgeDockWarnColors === true,
+    edgeDockRunningIndicatorEnabled: source.edgeDockRunningIndicatorEnabled !== false,
     // The user's own subscription records, so the card's plan cell can decorate
     // itself exactly as the page's does. They belong here rather than on a cell
     // because a record is not a property of a provider: it binds to one account
@@ -5283,7 +5498,7 @@ function edgeDockLiveRateSample(visibleStats) {
   if (expiresAt) {
     edgeDockRateTimer = setTimeout(() => {
       edgeDockRateTimer = null;
-      if (latestStats) updateEdgeDockCells(electronPresentationStats(latestStats));
+      repaintEdgeDockCells();
     }, Math.max(0, expiresAt - Date.now()) + 20);
   }
   return edgeDockRateTracker.getSample();
@@ -5294,6 +5509,20 @@ function edgeDockLiveRateSample(visibleStats) {
 // re-projects when the answer lands. Until then those readouts show unknown.
 let edgeDockDerivedPeriods = {};
 let edgeDockDerivedSignature = '';
+
+// A manual read is not a shared push snapshot. Keep it for dock re-projections
+// until the next push, without changing the renderer/widget snapshot source.
+let edgeDockManualStats = null;
+
+function edgeDockStats() {
+  return edgeDockManualStats?.generation === hubModeGeneration && edgeDockManualStats.runtime === deviceRuntimeHandle
+    ? edgeDockManualStats.stats : latestStats;
+}
+
+function repaintEdgeDockCells() {
+  const stats = edgeDockStats();
+  if (stats) updateEdgeDockCells(electronPresentationStats(stats));
+}
 
 function edgeDockDerivedSelections() {
   const items = Array.isArray(settings?.edgeDockItems) ? settings.edgeDockItems : [];
@@ -5319,8 +5548,9 @@ function refreshEdgeDockDerivedPeriods(visibleStats) {
   edgeDockDerivedSignature = signature;
   getDashboardHistory({ includeDevices: true })
     .then((history) => {
-      if (signature !== edgeDockDerivedSignature || !latestStats) return;
-      const stats = electronPresentationStats(latestStats);
+      const source = edgeDockStats();
+      if (signature !== edgeDockDerivedSignature || !source) return;
+      const stats = electronPresentationStats(source);
       const sources = fixedPeriodRangesApi.joinDeviceHistorySources(history?.deviceHistories || [], stats.devices || []);
       const preferred = typeof app.getPreferredSystemLanguages === 'function' ? app.getPreferredSystemLanguages() : [app.getLocale()];
       const next = {};
@@ -5370,10 +5600,19 @@ function refreshEdgeDockForecast() {
     .then((forecast) => {
       const changed = JSON.stringify(forecast || null) !== JSON.stringify(edgeDockForecast);
       edgeDockForecast = forecast || null;
-      if (changed && latestStats) updateEdgeDockCells(electronPresentationStats(latestStats));
+      if (changed) repaintEdgeDockCells();
     })
     .catch((error) => console.log(`[edge-dock] reset forecast failed: ${error.message}`))
     .finally(() => { edgeDockForecastInFlight = false; });
+}
+
+function canRefreshEdgeDockStats() {
+  return true;
+}
+
+async function refreshStatsFromEdgeDock() {
+  await refreshManualStats();
+  return { ok: true };
 }
 
 function edgeDockCellsFor(visibleStats) {
@@ -5454,7 +5693,7 @@ function scheduleEdgeDockSessionExpiry() {
   const delay = Math.max(EDGE_DOCK_EXPIRY_FLOOR_MS, expiresAt - Date.now() + 50);
   edgeDockSessionExpiryTimer = setTimeout(() => {
     edgeDockSessionExpiryTimer = null;
-    if (latestStats) updateEdgeDockCells(electronPresentationStats(latestStats));
+    repaintEdgeDockCells();
   }, delay);
 }
 
@@ -5498,8 +5737,10 @@ function ensureEdgeDockController() {
     performHaptic: (pattern, performanceTime) => performMacHaptic({ pattern, performanceTime }),
     isFullScreen: createFullScreenProbe({ platform: process.platform, screen, logger: (message) => console.log(message) }),
     // The dock card's Switch button runs the same swap the Limits view does,
-    // then repaints from the refreshed records. It is the dock's only write.
+    // then repaints from the refreshed records.
     onSwitchCodexAccount: (accountId) => switchCodexAccountFromEdgeDock(accountId),
+    canRefreshLimits: () => canRefreshEdgeDockStats(),
+    onRefreshLimits: () => refreshStatsFromEdgeDock(),
     onOpenResetForecastSource: () => {
       if (isAllowedExternalUrl(CODEX_RESET_FORECAST_SOURCE_URL)) void shell.openExternal(CODEX_RESET_FORECAST_SOURCE_URL);
     },
@@ -5536,7 +5777,8 @@ function syncEdgeDock(rendererSettings) {
   // Through the same path as a stats push, so the session-expiry timer is armed
   // from these cells too: a settings change replaces what is on screen just as a
   // push does, and skipping the reschedule here left the rail on a stale reading.
-  if (latestStats) pushEdgeDockCells(edgeDockCellsFor(electronPresentationStats(latestStats)));
+  const stats = edgeDockStats();
+  if (stats) pushEdgeDockCells(edgeDockCellsFor(electronPresentationStats(stats)));
   controller.sync();
   // Now that the controller is running (sync() starts it when enabled), arm the
   // timer against the cells that were just handed over.
@@ -5546,8 +5788,9 @@ function syncEdgeDock(rendererSettings) {
 function refreshLimitStatsPresentation() {
   if (!latestStats) return;
   const visibleStats = electronPresentationStats(latestStats);
+  migrateCodexAdditionalLimits(visibleStats);
   scheduleMacWidgetSnapshot(visibleStats, captureMacWidgetProducerOwner());
-  updateEdgeDockCells(visibleStats);
+  repaintEdgeDockCells();
   updateTrayDisplay();
   if (mainWindow && !mainWindow.isDestroyed()) {
     try {
@@ -5875,9 +6118,11 @@ function exitTrayMode() {
 }
 
 function startMode() {
+  getSyncContentRuntime().invalidate();
   hubModeGeneration += 1;
   advanceMacWidgetProducerAndSourceEpoch();
   clearLatestHubStatsCache();
+  edgeDockManualStats = null;
   const icloudStop = stopIcloudRuntime();
   // Tear down collectors synchronously so they can't double-run while the
   // async reconciliation below is queued. iCloud's filesystem teardown is
@@ -5904,14 +6149,15 @@ function startMode() {
         return;
       }
       if (!handle) {
-        // Bind failed (e.g. EADDRINUSE). The error is already surfaced via
-        // hub:push; fall back to the local collector so the widget still
-        // shows data while the user fixes the port.
+        // Hub startup or secret persistence failed. The error is already
+        // surfaced via hub:push; keep local collection available while the
+        // user resolves the startup failure.
         startLocalCollector();
         return;
       }
       startHostStats();
       startHostCollector();
+      void getSyncContentRuntime().refresh();
       reconcileSharedSubscriptions();
       return;
     }
@@ -5924,6 +6170,7 @@ function startMode() {
     if (effectiveHubConfig().url) {
       startStatsStream({ resetSnapshot: true });
       startSyncCollector();
+      void getSyncContentRuntime().refresh();
       reconcileSharedSubscriptions();
     } else {
       startLocalCollector();
@@ -6148,6 +6395,31 @@ async function writeExportTo(dir, periods, options = {}) {
   return { ok: true };
 }
 
+let manualStatsRefreshInFlight = null;
+
+function refreshManualStats() {
+  const runtime = deviceRuntimeHandle;
+  const generation = hubModeGeneration;
+  if (manualStatsRefreshInFlight?.runtime === runtime && manualStatsRefreshInFlight.generation === generation) {
+    return manualStatsRefreshInFlight.promise;
+  }
+  const revision = statsPushRevision;
+  const request = { runtime, generation, promise: null };
+  request.promise = fetchStats({ force: true, forceHistory: true, forceSelfSync: true }).then((stats) => {
+    // Both buttons update the dock once. A push received while this read was
+    // pending has already taken over, so a late read must not replace it.
+    if (runtime === deviceRuntimeHandle && generation === hubModeGeneration && revision === statsPushRevision) {
+      edgeDockManualStats = { stats, generation, runtime };
+      repaintEdgeDockCells();
+    }
+    return stats;
+  }).finally(() => {
+    if (manualStatsRefreshInFlight === request) manualStatsRefreshInFlight = null;
+  });
+  manualStatsRefreshInFlight = request;
+  return request.promise;
+}
+
 async function fetchStats(options = {}) {
   const requestGeneration = hubModeGeneration;
   const requestHubIdentity = currentHubStatsIdentity(settings?.hubMode === 'icloud' ? 'icloud' : 'client');
@@ -6218,57 +6490,10 @@ function regenerateTokscalePricing() {
 async function refreshAfterPricingChange() {
   try {
     if (ownsUsageRuntime()) {
-      await deviceRuntimeHandle.tick('manual', {});
+      await deviceRuntimeHandle.tick('manual', { forceHistory: true });
     }
   } catch (error) {
     console.warn(`[pricing] refresh after pricing change failed: ${error.message}`);
-  }
-}
-
-function stripTokscaleMetadata(result) {
-  if (!result || typeof result !== 'object') return result;
-  const { metadata: _metadata, ...publicResult } = result;
-  return publicResult;
-}
-
-function sendTokscalePush(payload) {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  try { mainWindow.webContents.send('tokscale:push', payload); } catch (_) {}
-}
-
-async function checkTokscaleNpm({ silent = false } = {}) {
-  try {
-    const result = await checkNpmForNewer(app.getVersion());
-    if (result.metadata) tokScaleNpmMetadata = result.metadata;
-    const publicResult = stripTokscaleMetadata(result);
-    sendTokscalePush({ type: 'check', ...publicResult });
-    return publicResult;
-  } catch (error) {
-    if (silent) {
-      console.log(`[tokscale] npm check failed: ${error.message}`);
-      return { supported: true, error: null, silent: true };
-    }
-    return { supported: true, error: error.message };
-  }
-}
-
-async function downloadTokscaleFromNpm() {
-  if (tokScaleUpdaterBusy) return { supported: true, busy: true };
-  tokScaleUpdaterBusy = true;
-  try {
-    if (!tokScaleNpmMetadata) {
-      const checked = await checkNpmForNewer(app.getVersion());
-      if (!checked.supported) return { supported: false };
-      tokScaleNpmMetadata = checked.metadata;
-    }
-    const result = await downloadFromNpm(tokScaleNpmMetadata);
-    const publicResult = stripTokscaleMetadata(result);
-    sendTokscalePush({ type: 'download', ...publicResult });
-    return publicResult;
-  } catch (error) {
-    return { supported: true, error: error.message };
-  } finally {
-    tokScaleUpdaterBusy = false;
   }
 }
 
@@ -7130,7 +7355,10 @@ app.whenReady().then(() => {
   createWindow();
   syncLoginItemSettingFromOs();
   configureWindowToggleShortcut();
-  cleanupStaleStaging().catch((error) => console.log(`[tokscale] staging cleanup failed: ${error.message}`));
+  // The retired in-app npm updater kept upstream tokscale builds here; the
+  // collector no longer reads them, so drop the leftovers.
+  fs.promises.rm(path.join(sharedDataDir(), 'tokscale'), { recursive: true, force: true })
+    .catch((error) => console.log(`[tokscale] removing retired npm downloads failed: ${error.message}`));
   ensureTray();
   if (settings.trayMode) enterTrayMode();
   regenerateTokscalePricing();
@@ -7150,7 +7378,6 @@ app.whenReady().then(() => {
   refreshExchangeRates();                // non-blocking: only fetches when stale
   rateRefreshTimer = setInterval(() => { refreshExchangeRates(); }, 6 * 60 * 60 * 1000);
   syncEdgeDock();
-  setTimeout(() => { checkTokscaleNpm({ silent: true }); }, 2000);
   ipcMain.handle('settings:get', () => settingsForRenderer());
   ipcMain.handle('appearance:getBackgroundImage', () => getBackgroundImage(app.getPath('userData')));
   ipcMain.handle('appearance:chooseBackgroundImage', async () => {
@@ -7229,6 +7456,11 @@ app.whenReady().then(() => {
       return { ok: false, error: error.message };
     }
   });
+  applySyncSettingsPatch = applySettingsPatch;
+  ipcMain.handle('syncContent:status', (_event, refresh = true) => refresh ? getSyncContentRuntime().refresh() : getSyncContentRuntime().status());
+  ipcMain.handle('syncContent:preview', (_event, kind) => getSyncContentRuntime().preview(kind));
+  ipcMain.handle('syncContent:configure', (_event, options) => getSyncContentRuntime().configure(options));
+  ipcMain.handle('syncContent:retryCleanup', () => getSyncContentRuntime().retryCleanup());
   const credentialCommands = createCredentialCommands({
     getSettings: () => settings,
     applySettingsPatch,
@@ -7238,13 +7470,24 @@ app.whenReady().then(() => {
   // pausing the session archive must not be reported done while the worker can
   // still capture under the old value.
   ipcMain.handle('settings:update', async (_event, patch) => {
-    const result = applySettingsPatch(patch);
+    const contentRuntime = getSyncContentRuntime();
+    const sharedEdit = patch.modelAliases !== undefined || patch.modelAliasGrouping !== undefined
+      || patch.customModelPricing !== undefined;
+    const settingsIdentity = contentRuntime.status().identity;
+    await contentRuntime.publishPatch(patch, patch?.syncContentBase);
+    if (sharedEdit && settingsIdentity !== contentRuntime.status().identity) throw new Error('hub_changed');
+    let dotsVisibilityApplied = Promise.resolve();
+    applySettingsPatch(patch, (refresh) => { dotsVisibilityApplied = refresh; });
     await latestUsageHost?.transformSettingsApplied?.();
-    return result;
+    await dotsVisibilityApplied;
+    // Other settings writes may finish while this visibility projection waits.
+    // Return the latest saved selection rather than restoring an older one.
+    return settingsForRenderer();
   });
   // The settings:update body, named so a credential save persists through the
   // exact same normalization, runtime reconfigure and limit invalidation.
-  function applySettingsPatch(patch) {
+  function applySettingsPatch(patch, onDotsVisibilityRefresh = () => {}) {
+    const contentRuntime = getSyncContentRuntime();
     credentialCommands.noteSettingsPatch(patch);
     const previousSettingsState = settings;
     const previousRuntimeSettings = JSON.parse(JSON.stringify(settings));
@@ -7272,6 +7515,9 @@ app.whenReady().then(() => {
     delete normalizedPatch.workbuddyEndpoint;
     delete normalizedPatch.workbuddyLocalAppEnabled;
     delete normalizedPatch.customModelPricing;
+    delete normalizedPatch.syncContentState;
+    delete normalizedPatch.syncContentStatus;
+    delete normalizedPatch.syncContentBase;
     // Account fields declared persist:'never' (managed account lists, profile
     // maps, workbuddy session fields) are stripped by the registry walk below.
     normalizeAccountPatch(patch, normalizedPatch);
@@ -7311,8 +7557,12 @@ app.whenReady().then(() => {
         : normalizeHubMode(settings.hubMode, 'local', process.platform),
       hubHostPort: patch.hubHostPort !== undefined ? normalizeHubPort(patch.hubHostPort, settings.hubHostPort) : settings.hubHostPort,
       hubHostSecret: patch.hubHostSecret !== undefined ? String(patch.hubHostSecret) : settings.hubHostSecret,
+      hubSyncSessionTitles: parseBoolean(patch.hubSyncSessionTitles ?? settings.hubSyncSessionTitles, false),
+      syncContentState: normalizeSyncContentState(settings.syncContentState),
       deviceId: (patch.deviceId !== undefined ? String(patch.deviceId).trim() : settings.deviceId) || defaultDeviceId(),
       clients: patch.clients !== undefined ? clientsCsvForSetting(patch.clients, '') : clientsCsvForSetting(settings.clients, DEFAULT_CLIENTS),
+      codexDotsEnabled: parseBoolean(patch.codexDotsEnabled ?? settings.codexDotsEnabled, false),
+      codexDotsVisible: parseBoolean(patch.codexDotsVisible ?? settings.codexDotsVisible, true),
       customScanPaths: normalizeCustomScanPaths(patch.customScanPaths ?? settings.customScanPaths),
       refreshMs: Math.max(5000, Number(patch.refreshMs ?? settings.refreshMs ?? 15000)),
       glassOpacity: Math.max(0, Math.min(100, Number(patch.glassOpacity ?? settings.glassOpacity ?? 68))),
@@ -7331,6 +7581,7 @@ app.whenReady().then(() => {
       compactTokenUnits: normalizeCompactTokenUnits(patch.compactTokenUnits ?? settings.compactTokenUnits),
       modelAliases: normalizeModelAliases(patch.modelAliases ?? settings.modelAliases),
       modelAliasGrouping: normalizeModelAliasGrouping(patch.modelAliasGrouping ?? settings.modelAliasGrouping),
+      textSize: fontSettingsApi.normalizeTextSize(patch.textSize ?? settings.textSize),
       interfaceFontFamily: fontSettingsApi.normalizeFontFamily(
         patch.interfaceFontFamily ?? settings.interfaceFontFamily
       ),
@@ -7340,6 +7591,8 @@ app.whenReady().then(() => {
       tokenRateMode: normalizeTokenRateMode(patch.tokenRateMode ?? settings.tokenRateMode),
       floatingBubbleEnabled: parseBoolean(patch.floatingBubbleEnabled ?? settings.floatingBubbleEnabled, false),
       edgeDockEnabled: parseBoolean(patch.edgeDockEnabled ?? settings.edgeDockEnabled, false),
+      edgeDockRefreshEnabled: parseBoolean(patch.edgeDockRefreshEnabled ?? settings.edgeDockRefreshEnabled, false),
+      edgeDockRunningIndicatorEnabled: parseBoolean(patch.edgeDockRunningIndicatorEnabled ?? settings.edgeDockRunningIndicatorEnabled, true),
       edgeDockSide: normalizeEdgeDockSide(patch.edgeDockSide ?? settings.edgeDockSide),
       edgeDockOffset: normalizeEdgeDockOffset(patch.edgeDockOffset ?? settings.edgeDockOffset),
       edgeDockDisplayId: normalizeEdgeDockDisplayId(patch.edgeDockDisplayId ?? settings.edgeDockDisplayId),
@@ -7347,6 +7600,8 @@ app.whenReady().then(() => {
       edgeDockHaptic: parseBoolean(patch.edgeDockHaptic ?? settings.edgeDockHaptic, true),
       edgeDockWarnColors: parseBoolean(patch.edgeDockWarnColors ?? settings.edgeDockWarnColors, false),
       edgeDockMacBackdrop: normalizeEdgeDockBackdropMode(patch.edgeDockMacBackdrop ?? settings.edgeDockMacBackdrop),
+      edgeDockSize: normalizeEdgeDockSize(patch.edgeDockSize ?? settings.edgeDockSize),
+      edgeDockCustomScale: normalizeEdgeDockCustomScale(patch.edgeDockCustomScale ?? settings.edgeDockCustomScale),
       // `null` is a real value here (back to the automatic default), so the
       // patch is checked for presence rather than coalesced.
       edgeDockItems: normalizeEdgeDockItems('edgeDockItems' in (patch || {}) ? patch.edgeDockItems : settings.edgeDockItems),
@@ -7379,12 +7634,15 @@ app.whenReady().then(() => {
       homeModuleOrder: patch.homeModuleOrder !== undefined ? normalizeHomeModuleOrder(patch.homeModuleOrder, DEFAULT_HOME_MODULE_LIST).join(',') : normalizeHomeModuleOrder(settings.homeModuleOrder, DEFAULT_HOME_MODULE_LIST).join(','),
       hiddenHomeModules: patch.hiddenHomeModules !== undefined ? normalizeHiddenHomeModules(patch.hiddenHomeModules, DEFAULT_HOME_MODULE_LIST) : normalizeHiddenHomeModules(settings.hiddenHomeModules, DEFAULT_HOME_MODULE_LIST),
       showHomeLimitBars: parseBoolean(patch.showHomeLimitBars ?? settings.showHomeLimitBars, false),
+      homeLimitDisplayMode: normalizeHomeLimitDisplayMode(patch.homeLimitDisplayMode ?? settings.homeLimitDisplayMode),
       showHomeLimitProviderNames: parseBoolean(patch.showHomeLimitProviderNames ?? settings.showHomeLimitProviderNames, false),
       homeLimitProviderOrder: patch.homeLimitProviderOrder !== undefined ? migrateHomeLimitProviderOrder(patch.homeLimitProviderOrder) : (settings.homeLimitProviderOrder || ''),
       hiddenHomeLimitProviders: patch.hiddenHomeLimitProviders !== undefined ? normalizeHiddenLimitProviders(patch.hiddenHomeLimitProviders) : normalizeHiddenLimitProviders(settings.hiddenHomeLimitProviders),
+      limitProviderHiddenItems: normalizeLimitProviderHiddenItems(patch.limitProviderHiddenItems ?? settings.limitProviderHiddenItems),
       homeLimitAccountCount: normalizeHomeLimitAccountCount(patch.homeLimitAccountCount ?? settings.homeLimitAccountCount),
       periodMonthMode: normalizePeriodMonthMode(patch.periodMonthMode ?? settings.periodMonthMode),
       modelRankingMetric: normalizeRankingMetric(patch.modelRankingMetric ?? settings.modelRankingMetric),
+      sessionTitlesEnabled: parseBoolean(patch.sessionTitlesEnabled ?? settings.sessionTitlesEnabled, true),
       sessionContextMetric: normalizeSessionContextMetric(patch.sessionContextMetric ?? settings.sessionContextMetric),
       historyEnabled: parseBoolean(patch.historyEnabled ?? settings.historyEnabled, false),
       projectsEnabled: parseBoolean(patch.projectsEnabled ?? settings.projectsEnabled, true),
@@ -7435,12 +7693,24 @@ app.whenReady().then(() => {
     settings.archivedClientUsage = normalizeArchivedClientUsage(settings.archivedClientUsage);
     if (settings.clients !== previousClients) updateArchivedClientUsage(previousClients, settings.clients);
     delete settings.edgeDrawerEnabled;
+    const nextSettingsState = settings;
+    settings = previousSettingsState;
     try {
+      // Journal the previous title context and OFF while the old connection is
+      // still active. No replacement credentials/device may commit before this.
+      contentRuntime.beforeDestinationChange(syncContentContext(nextSettingsState));
+      nextSettingsState.syncContentState = normalizeSyncContentState(settings.syncContentState);
+      settings = nextSettingsState;
       saveSettings({ throwOnError: true });
     } catch (error) {
-      settings = previousSettingsState;
+      // Keep any OFF/cleanup journal already committed by the preflight.
+      settings = { ...previousSettingsState,
+        syncContentState: normalizeSyncContentState(persistedSettingsSnapshot?.syncContentState || settings.syncContentState) };
       throw error;
     }
+    contentRuntime.invalidate();
+    const receiverPermissionChanged = settings.hubSyncSessionTitles !== previousSettingsState.hubSyncSessionTitles;
+    if (receiverPermissionChanged) contentRuntime.receiverPermissionChanged(settings.hubSyncSessionTitles);
     // A worker-hosted transform holds its own copy of the settings it reads.
     // Update it now rather than when the usage reconfigure settles: pausing the
     // session archive must stop captures from the next summary on.
@@ -7487,7 +7757,7 @@ app.whenReady().then(() => {
       refreshMacWidgetHistorySource();
     }
     const limitInvalidations = settingsLimitInvalidationPlan(runtimeChange);
-    if (runtimeChange.modeStructural) {
+    if (runtimeChange.modeStructural || (receiverPermissionChanged && settings.hubMode === 'host')) {
       for (const { scope, reason, options } of limitInvalidations) {
         rememberPendingLimitInvalidation(scope, reason, options);
       }
@@ -7500,6 +7770,14 @@ app.whenReady().then(() => {
     } else {
       if (runtimeChange.usageStructural) {
         reconfigureUsageRuntimeForMode();
+      } else if (previousRuntimeSettings.codexDotsVisible !== settings.codexDotsVisible) {
+        const dotsVisibilityApplied = Promise.resolve(deviceRuntimeHandle?.setCodexDotsVisible(settings.codexDotsVisible));
+        onDotsVisibilityRefresh(dotsVisibilityApplied);
+        // Keep failure observable to settings:update without an unhandled
+        // rejection for callers that use the synchronous settings path.
+        dotsVisibilityApplied.catch((error) => {
+          console.log(`[collector] Dots visibility refresh failed: ${error.message}`);
+        });
       }
       if (runtimeChange.limitsReconfigure && deviceRuntimeHandle) {
         deviceRuntimeHandle.reconfigureLimits(electronLimitsConfig());
@@ -7555,6 +7833,9 @@ app.whenReady().then(() => {
       }
     }
     pushSettingsToRenderer();
+    if (settings.sessionTitlesEnabled !== previousSettingsState.sessionTitlesEnabled) {
+      refreshLimitStatsPresentation();
+    }
     return settingsForRenderer();
   }
   ipcMain.handle('appearance:preview', (event, patch) => {
@@ -7564,6 +7845,9 @@ app.whenReady().then(() => {
     syncNativeMaterialVisibility(win, nativeMaterialOptions({ ...settings, ...patch }, win === dashboardWindow));
     if (patch && patch.zoomFactor !== undefined && mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.setZoomFactor(clampZoom(patch.zoomFactor));
+    }
+    if (patch && patch.edgeDockCustomScale !== undefined && edgeDockController?.isRunning()) {
+      edgeDockController.previewScale(patch.edgeDockCustomScale);
     }
     return true;
   });
@@ -7675,7 +7959,7 @@ app.whenReady().then(() => {
     return true;
   });
   ipcMain.handle('stats:get', async (_event, options) => {
-    const stats = await fetchStats(options);
+    const stats = await (options?.force === true && options?.feedback === true ? refreshManualStats() : fetchStats(options));
     // The stream normally carries the stamp, but it is precisely when the stream
     // is down that this read is the only thing still arriving from the hub.
     maybeAdoptSharedSubscriptionRevision(stats);
@@ -7711,7 +7995,9 @@ app.whenReady().then(() => {
   });
   ipcMain.handle('session:getDetail', (_event, args) => {
     const { client, sessionId, period, sessionCost } = args || {};
-    return readSessionDetailForPlatform({ client, sessionId, period, sessionCost });
+    return readSessionDetailForPlatform({ client, sessionId, period, sessionCost }, {
+      lookupModelPricing, getPricingRevision: () => pricingFingerprint({ pricingPath: customPricingPath() })
+    });
   });
   ipcMain.handle('stream:status', () => ({ connected: streamConnected, mode, ...(streamFailure || {}) }));
   ipcMain.handle('serviceStatus:get', (_event, options) => serviceStatusClient.getServiceStatus({
@@ -7727,9 +8013,7 @@ app.whenReady().then(() => {
   ipcMain.handle('hub:getInfo', () => getHubInfo());
   ipcMain.handle('hub:getBuildStatus', () => getHubBuildStatus());
   ipcMain.handle('hub:regenerateSecret', () => {
-    settings.hubHostSecret = generateHubSecret();
-    saveSettings({ throwOnError: true });
-    if (settings.hubMode === 'host') startMode();
+    applySettingsPatch({ hubHostSecret: generateHubSecret() });
     return getHubInfo();
   });
   ipcMain.handle('appearance:getNativeMaterial', (event) => {
@@ -7840,21 +8124,11 @@ app.whenReady().then(() => {
   ipcMain.handle('mimo:openConsole', () => shell.openExternal(MIMO_PLATFORM_CONSOLE_URL)
     .then(() => ({ ok: true }))
     .catch((error) => ({ ok: false, error: error.message })));
-  registerManagedAccountIpc(ipcMain, 'mimo', {
-    listAccounts: mimoAccountsForRenderer,
-    setAccountEnabled: mimoAccountLifecycle.setAccountEnabled,
-    removeAccount: mimoAccountLifecycle.removeAccount
-  });
+  ipcMain.handle('mimo:accounts', () => mimoAccountsForRenderer());
+  ipcMain.handle('mimo:setAccountEnabled', (_event, id, enabled) => setMimoManagedAccountEnabled(id, enabled));
+  ipcMain.handle('mimo:removeAccount', async (_event, id) => removeMimoManagedAccount(id));
   for (const controller of Object.values(apiKeyAccountControllers)) controller.registerIpc(ipcMain);
   ipcMain.handle('tokscale:getStatus', () => getTokscaleStatus());
-  ipcMain.handle('tokscale:checkNpm', () => checkTokscaleNpm());
-  ipcMain.handle('tokscale:downloadFromNpm', () => downloadTokscaleFromNpm());
-  ipcMain.handle('tokscale:resetToBundled', async () => {
-    tokScaleNpmMetadata = null;
-    const status = await resetToBundled();
-    sendTokscalePush({ type: 'reset', status });
-    return status;
-  });
   ipcMain.handle('appUpdate:getState', () => deriveAppUpdateState());
   ipcMain.handle('appUpdate:checkNow', () => runAppUpdateCheck({ force: true }));
   ipcMain.handle('appUpdate:download', () => downloadAndPrepareAppUpdate());
@@ -8792,14 +9066,21 @@ app.whenReady().then(() => {
   });
   ipcMain.on('dashboard:minimize', (event) => { BrowserWindow.fromWebContents(event.sender)?.minimize(); });
   ipcMain.on('dashboard:close', (event) => { BrowserWindow.fromWebContents(event.sender)?.close(); });
-  // The window this builds is about to be on screen, so the policy is resolved
-  // for a visible window exactly as focusExistingWindow() does. Without it this
-  // was the one path reaching applyMacSpaceBehavior() with a process type
-  // nothing had decided, which skipTransformProcessType now preserves.
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().some((win) => !edgeDockController?.owns(win))) return;
-    applyMacActivationPolicy({ mainWindowVisible: true });
-    createWindow();
+    const action = activateWindowAction({
+      mainWindow,
+      windows: BrowserWindow.getAllWindows(),
+      isDockOwned: (win) => Boolean(edgeDockController?.owns(win))
+    });
+    if (action === 'focusWindow') focusExistingWindow();
+    else if (action === 'createWindow') {
+      // The window this builds is about to be on screen, so the policy is resolved
+      // for a visible window exactly as focusExistingWindow() does. Without it this
+      // was the one path reaching applyMacSpaceBehavior() with a process type
+      // nothing had decided, which skipTransformProcessType now preserves.
+      applyMacActivationPolicy({ mainWindowVisible: true });
+      createWindow();
+    }
   });
   maybeRunBackgroundUpdateCheck();
   startAppUpdateBackgroundChecks();

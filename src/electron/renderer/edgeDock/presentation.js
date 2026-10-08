@@ -13,11 +13,12 @@
     node ? require('./items') : root?.TokenMonitorEdgeDockItems,
     node ? require('../accountIdentity') : root?.TokenMonitorAccountIdentity,
     node ? require('../../../shared/sessionLive') : root?.TokenMonitorSessionLive,
-    node ? require('../usageAttributionRows') : root?.TokenMonitorUsageAttributionRows
+    node ? require('../usageAttributionRows') : root?.TokenMonitorUsageAttributionRows,
+    node ? require('../limits/resetMotion') : root?.TokenMonitorLimitResetMotion
   );
   if (node) module.exports = api;
   if (root) root.TokenMonitorEdgeDockPresentation = api;
-})(typeof window !== 'undefined' ? window : null, function createEdgeDockPresentation(trayText, balanceDisplay, limitProviders, dockItems, accountIdentity, sessionLive, usageAttributionRows) {
+})(typeof window !== 'undefined' ? window : null, function createEdgeDockPresentation(trayText, balanceDisplay, limitProviders, dockItems, accountIdentity, sessionLive, usageAttributionRows, limitResetMotion) {
   // Every account is listed; the card scrolls when they outgrow the screen.
   const MAX_BUBBLE_ACCOUNTS = 50;
 
@@ -126,14 +127,16 @@
   function periodUsageFor(period, provider) {
     let tokens = 0;
     let costUsd = 0;
+    let unpricedTokens = 0;
     let seen = false;
     for (const [client, value] of Object.entries(period?.clients || {})) {
       if (providerForClient(normalizedId(client)) !== provider) continue;
       seen = true;
       tokens += finite(value) || 0;
       costUsd += finite(period?.clientCosts?.[client]) || 0;
+      unpricedTokens += finite(period?.clientUnpricedTokens?.[client]) || 0;
     }
-    return seen ? { tokens, costUsd } : null;
+    return seen ? { tokens, costUsd, ...(unpricedTokens > 0 ? { unpricedTokens } : {}) } : null;
   }
 
   const RECENT_SESSION_COUNT = 3;
@@ -193,8 +196,12 @@
         // "N models" for a multi-model session — a reading this projection
         // could not reproduce from a flattened winner.
         models: session.models || {},
+        promptCache: session.promptCache || null,
+        contextTokens: finite(session.contextTokens),
+        contextWindow: finite(session.contextWindow),
         totalTokens: finite(session.totalTokens) || 0,
         costUsd: finite(session.costUsd) || 0,
+        ...(session.unpricedTokens > 0 ? { unpricedTokens: finite(session.unpricedTokens) || 0 } : {}),
         lastUsedAt: session.lastUsedAt || null,
         startedAt: session.startedAt || null,
         // Carried onto the projected row, not just used here: the dock renderer
@@ -409,6 +416,15 @@
       remainingPercent: headline ? headline.summary.headlineRemaining : null,
       severityPercent: headline ? headline.summary.severityPercent : null,
       windowKind: headlineWindow ? String(headlineWindow.kind || '') : '',
+      // The headline window's cycle boundary plus the identities the Limits
+      // view keys its rows on. The rail's refill motion needs them to tell a
+      // real reset apart from a headline that moved to another account or
+      // window — a swap animates nothing, a reset animates the ring.
+      resetsAt: headlineWindow?.resetsAt || null,
+      headlineAccount: headline ? limitResetMotion.providerKey(headline.record) : '',
+      headlineWindowKey: headlineWindow
+        ? limitResetMotion.windowKey(headlineWindow.label || '', headlineWindow)
+        : '',
       credits: headlineCredits,
       accountCount: accounts.length,
       accounts: projected.slice(0, MAX_BUBBLE_ACCOUNTS).map((account) => account.summary),
@@ -447,12 +463,15 @@
   function clientBreakdown(period, metric) {
     return usageAttributionRows.attributionRows(period?.clients, period?.clientCosts, {
       totalValue: period?.totalTokens,
-      totalCost: period?.costUsd
+      totalCost: period?.costUsd,
+      totalUnpricedTokens: period?.unpricedTokens,
+      unpricedTokens: period?.clientUnpricedTokens
     })
       .map((entry) => ({
         client: normalizedId(entry.key),
         tokens: finite(entry.value) || 0,
         costUsd: finite(entry.cost) || 0,
+        ...(entry.unpricedTokens > 0 ? { unpricedTokens: entry.unpricedTokens } : {}),
         unattributed: entry.unattributed === true
       }))
       .filter((entry) => entry.client && (metric === 'cost' ? entry.costUsd > 0 : entry.tokens > 0))
@@ -462,12 +481,15 @@
   function modelBreakdown(period) {
     return usageAttributionRows.attributionRows(period?.models, period?.modelCosts, {
       totalValue: period?.totalTokens,
-      totalCost: period?.costUsd
+      totalCost: period?.costUsd,
+      totalUnpricedTokens: period?.unpricedTokens,
+      unpricedTokens: period?.modelUnpricedTokens
     })
       .map((entry) => ({
         model: entry.key,
         tokens: finite(entry.value) || 0,
         costUsd: finite(entry.cost) || 0,
+        ...(entry.unpricedTokens > 0 ? { unpricedTokens: entry.unpricedTokens } : {}),
         unattributed: entry.unattributed === true
       }))
       .filter((entry) => entry.tokens > 0)
@@ -484,6 +506,7 @@
         id: `stat:${metric}`,
         kind: 'stat',
         metric,
+        rateDevices: sample?.devices || [],
         rateMode: options.tokenRateMode === 'burn' ? 'burn' : 'speed',
         rate: sample ? (options.tokenRateMode === 'burn' ? sample.burn : sample.speed) : null,
         speed: sample ? finite(sample.speed) : null,
@@ -541,6 +564,7 @@
       available: Boolean(period),
       totalTokens: period ? finite(period.totalTokens) || 0 : null,
       costUsd: period ? finite(period.costUsd) || 0 : null,
+      ...(period?.unpricedTokens > 0 ? { unpricedTokens: finite(period.unpricedTokens) || 0 } : {}),
       clients,
       models
     };

@@ -1,6 +1,6 @@
 'use strict';
 
-const { collectorAnchorTrust, computePeriodWindows, qoderCnSourcesForClients, minimaxDbPathsForClients } = require('./collector');
+const { collectorAnchorTrust, computePeriodWindows, qoderCnSourcesForClients } = require('./collector');
 const { mergePeriods } = require('./usage');
 const { filterReasonixSyntheticSessions } = require('./providers/reasonix/sessionGuard');
 
@@ -26,7 +26,6 @@ function deviceRecordFromAnchor(saved, options = {}) {
     qoderCnDbPath: qoderCnDbPathOption,
     qoderCnProjectsDir: qoderCnProjectsDirOption,
     customScanPaths = null,
-    minimaxDbPaths: minimaxDbPathsOption,
     homeDir,
     env,
     sourcePlatform,
@@ -39,10 +38,7 @@ function deviceRecordFromAnchor(saved, options = {}) {
   const qoderCnSources = qoderCnSourcesForClients(clients, { homeDir, env, platform: sourcePlatform });
   const qoderCnDbPath = qoderCnDbPathOption === undefined ? qoderCnSources.dbPath : qoderCnDbPathOption;
   const qoderCnProjectsDir = qoderCnProjectsDirOption === undefined ? qoderCnSources.projectsDir : qoderCnProjectsDirOption;
-  const minimaxDbPaths = minimaxDbPathsOption === undefined
-    ? minimaxDbPathsForClients(clients, { homeDir })
-    : minimaxDbPathsOption;
-  const trust = collectorAnchorTrust(saved, { clients, allTimeSince, projectsEnabled, qoderCnDbPath, qoderCnProjectsDir, customScanPaths, minimaxDbPaths, now });
+  const trust = collectorAnchorTrust(saved, { ...options, clients, allTimeSince, projectsEnabled, qoderCnDbPath, qoderCnProjectsDir, customScanPaths, now });
   if (!trust) return null;
   // The seed's own rule, and the one place it is stricter than the collector.
   // A capture time the collector cannot trust only costs it a full scan, but
