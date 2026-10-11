@@ -262,6 +262,69 @@
     return textValue(session?.sessionKind) === 'background-review';
   }
 
+  // Cursor's sandbox ids identify bot runs independently of the model. A
+  // positive grok-bot model also proves a bot conversation with a regular id;
+  // its other models belong to the same conversation, including Claude.
+  function isGrokBotSession(session, key) {
+    if (session?.client !== 'cursor') return false;
+    if (typeof session.grokBotSession === 'boolean') return session.grokBotSession;
+    const id = textValue(session?.sessionId) || String(key || '').replace(/^cursor:/, '');
+    return /^sand-subagent-.+/.test(id) || Object.entries(session?.models || {})
+      .some(([model, tokens]) => /^grok-bot-.+/.test(model) && finiteNumber(tokens) > 0);
+  }
+
+  const botIdentityCache = new WeakMap();
+  const botIdSets = new WeakMap();
+
+  // Accounting maps use client:sessionId keys. Only inspect the visible
+  // candidates' historical rows: enumerating history would make a DAY repaint
+  // scale with the lifetime session count. Snapshot maps are immutable.
+  function grokBotSessionIdsForMaps(visibleMaps, historyMaps = []) {
+    const maps = visibleMaps.filter(map => map && typeof map === 'object');
+    const history = historyMaps.filter(map => map && typeof map === 'object');
+    if (maps.length === 0) return [];
+    const cached = botIdentityCache.get(maps[0]);
+    const sameMaps = (a, b) => a.length === b.length && a.every((map, index) => map === b[index]);
+    if (cached && sameMaps(cached.maps, maps) && sameMaps(cached.history, history)) return cached.ids;
+    const candidates = new Set();
+    const bots = new Set();
+    for (const map of maps) {
+      for (const [key, session] of Object.entries(map)) {
+        if (session?.client !== 'cursor') continue;
+        const id = textValue(session.sessionId) || key.replace(/^cursor:/, '');
+        candidates.add(id);
+        if (isGrokBotSession(session, key)) bots.add(id);
+      }
+    }
+    for (const id of candidates) {
+      if (bots.has(id)) continue;
+      const key = `cursor:${id}`;
+      if (history.some(map => isGrokBotSession(map[key], key))) bots.add(id);
+    }
+    const ids = [...bots];
+    botIdentityCache.set(maps[0], { maps, history, ids });
+    return ids;
+  }
+
+  function grokBotIdsForPeriod(period, options) {
+    // A pushed compact list is authoritative, including an empty one. Never
+    // revive identity from a stale TOTAL list attached by the renderer loader.
+    const ids = Array.isArray(options.grokBotSessionIds) ? options.grokBotSessionIds
+      : grokBotSessionIdsForMaps([period?.sessions],
+        Object.values(options.sourcePeriods || {}).map(value => value?.sessions));
+    let result = botIdSets.get(ids);
+    if (!result) {
+      result = new Set(ids);
+      botIdSets.set(ids, result);
+    }
+    return result;
+  }
+
+  function sessionRowDetailAvailable(row) {
+    return ['claude', 'codebuddy', 'codex', 'opencode', 'dsh', 'workbuddy'].includes(row?.client)
+      || (row?.client === 'reasonix' && row?.sessionDetailAvailable === true);
+  }
+
   function nativeSessionRow(session, key, options, now) {
     const periodTokenDataUnavailable = session?.periodTokenDataUnavailable === true;
     // Native telemetry is cumulative for a resumed Branch, but it remains a
@@ -279,7 +342,7 @@
     const { clientLabel, titleParts, modelLabel } = sessionTitleParts(
       { ...session, client },
       labels,
-      'Reasonix',
+      client === 'codex' ? 'Codex' : client === 'claude' ? 'Claude Code' : 'Reasonix',
       session?.model
     );
     // Native Reasonix prompt totals include cache hits; explicit misses win,
@@ -332,6 +395,7 @@
       color: colors[client] || stable(key, palette),
       stale: false,
       client,
+      backgroundReview: isBackgroundReviewSession(session) || undefined,
       sortTime: sessionTimestampValue(session),
       title: `${clientLabel} session ${sessionIdLabel(session?.sessionId || key)}`
     };
@@ -345,8 +409,21 @@
     const palette = options.fallbackColors || fallbackColors;
     const archivedLabel = options.archivedLabel || 'Archived';
     const now = options.now || new Date();
+    // A day may contain only Claude usage from a bot conversation that used a
+    // grok-bot model earlier. Join evidence by conversation id, never by model.
+    const botIds = grokBotIdsForPeriod(period, options);
     const rows = Object.entries(period?.sessions || {})
       .map(([key, session]) => {
+        session = sessionLive.sessionWithActivity(period, key, session);
+        const native = options.nativeSessions?.[key];
+        // A resumed source can be active before accounting replaces its archive.
+        // Join only presentation activity; the retained token/cost values stay put.
+        if (sessionLive.isArchivedSession(session) && native?.client === session.client
+          && native.sessionId === session.sessionId && ['running', 'waiting'].includes(sessionActivityState(native, now))) {
+          session = { ...session, archived: false, deleted: false, sourceDeleted: false,
+            lastUsedAt: native.lastUsedAt, liveActivity: native.liveActivity,
+            turnEnded: native.turnEnded, waitingForInput: native.waitingForInput };
+        }
         if (isReasonixSyntheticSession(session, key)) return null;
         const value = finiteNumber(session?.totalTokens);
         if (value <= 0) return null;
@@ -391,12 +468,16 @@
           promptCache: sessionLive.sessionPromptCacheForRow(session, now),
           client,
           backgroundReview: isBackgroundReviewSession(session) || undefined,
+          grokBot: (isGrokBotSession(session, key) || (client === 'cursor'
+            && botIds.has(textValue(session?.sessionId) || key.replace(/^cursor:/, '')))) || undefined,
           sortTime: sessionTimestampValue(session),
           title: `${clientLabel} session${sessionIdLabel(sessionId) ? ` ${sessionIdLabel(sessionId)}` : ''}`
         };
       })
       .filter(Boolean);
+    const usageKeys = new Set(rows.map((row) => row.key));
     for (const [key, session] of Object.entries(options.nativeSessions || {})) {
+      if (usageKeys.has(`session:${key}`)) continue;
       const row = nativeSessionRow(session, key, options, now);
       if (row) rows.push(row);
     }
@@ -410,38 +491,61 @@
       (row?.backgroundReview === true ? reviews : primary).push(row);
     }
     if (reviews.length === 0) return primary;
-    const value = reviews.reduce((sum, row) => sum + finiteNumber(row.value), 0);
-    const cost = reviews.reduce((sum, row) => sum + finiteNumber(row.cost), 0);
-    const sortTime = reviews.reduce((max, row) => Math.max(max, finiteNumber(row.sortTime)), 0);
-    const orderedReviews = [...reviews].sort((a, b) => finiteNumber(b.sortTime) - finiteNumber(a.sortTime));
-    const latest = orderedReviews[0] || null;
+    return [...primary, sessionSummaryRow(reviews, {
+      ...options, id: 'codex-auto-review', client: 'codex',
+      label: options.label || 'Codex Auto Review'
+    })];
+  }
+
+  function sessionSummaryRow(rows, options) {
+    const value = rows.reduce((sum, row) => sum + finiteNumber(row.value), 0);
+    const cost = rows.reduce((sum, row) => sum + finiteNumber(row.cost), 0);
+    const unpricedTokens = rows.reduce((sum, row) => sum + finiteNumber(row.unpricedTokens), 0);
+    const ordered = [...rows].sort((a, b) => finiteNumber(b.sortTime) - finiteNumber(a.sortTime));
+    const latest = ordered[0];
+    const sortTime = finiteNumber(latest?.sortTime);
     const countLabel = typeof options.countLabel === 'function'
-      ? options.countLabel(reviews.length)
-      : `${reviews.length} sessions`;
-    const summary = {
-      key: 'session-group:codex-auto-review',
+      ? options.countLabel(rows.length) : `${rows.length} sessions`;
+    return {
+      key: `session-group:${options.id}`,
       kind: 'summary',
-      name: options.label || 'Codex Auto Review',
+      name: options.label,
       subtitle: typeof options.summaryLabel === 'function'
         ? options.summaryLabel({
-          count: reviews.length,
-          countLabel,
+          count: rows.length, countLabel,
           latestTime: compactSessionTime(sortTime, options.now || new Date()),
           latestValue: finiteNumber(latest?.value)
-        })
-        : '',
+        }) : '',
       detail: countLabel,
       value,
       cost,
+      ...(unpricedTokens > 0 ? { unpricedTokens } : {}),
       barValue: value,
-      color: reviews[0]?.color || fallbackColors[0],
+      color: rows[0]?.color || fallbackColors[0],
       stale: false,
-      client: 'codex',
+      client: options.client,
       sortTime,
-      reviewGroup: true,
-      backgroundReviewRows: orderedReviews
+      sessionGroup: options.id,
+      groupRows: ordered
     };
-    return [...primary, summary];
+  }
+
+  function groupSessionRows(rows, options = {}) {
+    const primary = [];
+    const bots = [];
+    for (const row of Array.isArray(rows) ? rows : []) {
+      (row?.grokBot === true ? bots : primary).push(row);
+    }
+    const grouped = groupBackgroundReviewRows(primary, options.backgroundReviews);
+    if (bots.length > 0) grouped.push(sessionSummaryRow(bots, {
+      // These source ids include internal subagents, not just user chat rooms.
+      countLabel: (count) => `${count} activity records`,
+      ...options.grokBot, id: 'cursor-grok-bot', client: 'cursor',
+      label: options.grokBot?.label || 'Grok Bot'
+    }));
+    return grouped.sort((a, b) => finiteNumber(b.sortTime) - finiteNumber(a.sortTime)
+      || finiteNumber(b.value) - finiteNumber(a.value) || finiteNumber(b.cost) - finiteNumber(a.cost)
+      || a.name.localeCompare(b.name));
   }
 
   function sessionBreakdownIncomplete(stats, periodName) {
@@ -470,6 +574,10 @@
     archivedSessionCount,
     compactSessionTime,
     groupBackgroundReviewRows,
+    groupSessionRows,
+    grokBotSessionIdsForMaps,
+    isGrokBotSession,
+    sessionRowDetailAvailable,
     handleBreakdownRowKeydown,
     sessionBreakdownIncomplete,
     sessionCacheHitPercent,
