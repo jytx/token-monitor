@@ -42,11 +42,60 @@ test('refreshStepfunToken posts to the passport endpoint with the cookie pair', 
   assert.equal(requests[0].init.credentials, 'omit');
 });
 
-test('refreshStepfunToken maps rejections and network failures to null', async () => {
-  assert.equal(await refreshStepfunToken('a...b', 'device-id', {
-    fetch: async () => ({ ok: false, status: 401 })
-  }), null);
-  assert.equal(await refreshStepfunToken('a...b', 'device-id', {
+test('refreshStepfunToken reserves null for authentication rejection', async () => {
+  for (const status of [401, 403]) {
+    assert.equal(await refreshStepfunToken('a...b', 'device-id', {
+      fetch: async () => ({ ok: false, status })
+    }), null);
+  }
+});
+
+test('refreshStepfunToken preserves retryable transport and HTTP failures', async () => {
+  await assert.rejects(refreshStepfunToken('a...b', 'device-id', {
     fetch: async () => { throw new Error('offline'); }
-  }), null);
+  }), { status: 'unavailable' });
+  for (const [httpStatus, status] of [[429, 'sourceRateLimited'], [500, 'unavailable'], [503, 'unavailable']]) {
+    await assert.rejects(refreshStepfunToken('a...b', 'device-id', {
+      fetch: async () => ({ ok: false, status: httpStatus })
+    }), { status });
+  }
+});
+
+test('an invalid successful refresh response is unavailable rather than an auth rejection', async () => {
+  for (const json of [async () => { throw new Error('invalid JSON'); }, async () => ({}),
+    async () => ({ accessToken: { raw: 'invalid;access' } })]) {
+    await assert.rejects(refreshStepfunToken('a...b', 'device-id', {
+      fetch: async () => ({ ok: true, json })
+    }), { status: 'unavailable' });
+  }
+});
+
+test('refreshStepfunToken propagates cancellation', async () => {
+  const controller = new AbortController();
+  const reason = new Error('superseded');
+  await assert.rejects(refreshStepfunToken('a...b', 'device-id', {
+    signal: controller.signal,
+    fetch: async (_url, { signal }) => {
+      controller.abort(reason);
+      throw signal.reason;
+    }
+  }), error => error === reason);
+});
+
+test('refreshStepfunToken propagates cancellation raised during the body read', async () => {
+  const controller = new AbortController();
+  const reason = new Error('superseded');
+  // Use a different error from signal.reason to verify the body rejection's identity is preserved.
+  const bodyError = new Error('body read aborted');
+  assert.notEqual(bodyError, reason);
+  await assert.rejects(refreshStepfunToken('a...b', 'device-id', {
+    signal: controller.signal,
+    fetch: async () => ({
+      ok: true,
+      json: async () => {
+        controller.abort(reason);
+        throw bodyError;
+      }
+    })
+  }), error => error === bodyError);
 });
