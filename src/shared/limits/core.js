@@ -2,6 +2,7 @@
 
 const { staleAfterMsForSyncUpload } = require('../syncUploadInterval');
 const { LIMIT_PROVIDER_IDS, VALID_LIMIT_WINDOW_METRICS } = require('./providers');
+const { isWorkbuddyPlaceholder } = require('../providers/workbuddy/identity');
 
 const DEFAULT_LIMITS_REFRESH_MS = 5 * 60 * 1000;
 const VALID_PROVIDERS = new Set(LIMIT_PROVIDER_IDS);
@@ -611,7 +612,8 @@ function providerAggregateKey(provider) {
 }
 
 function isConfiguredProvider(provider) {
-  return Boolean(provider.accountKey && provider.status !== 'notConfigured' && provider.status !== 'disabled');
+  return Boolean(provider.accountKey && provider.status !== 'notConfigured' && provider.status !== 'disabled'
+    && !isWorkbuddyPlaceholder(provider));
 }
 
 // 聚合时按 provider:accountKey 保留多行的供应商：多账号供应商（minimax/
@@ -619,10 +621,14 @@ function isConfiguredProvider(provider) {
 // alibaba 并非用户维护的多账号，但会出现多个 accountKey——cursor 的 OAuth
 // 账号键天然多行，volcengine 的键来自 AK/SK 与区域（两键是 Coding/Agent
 // 套餐拆分），alibaba 的键是控制台账号 UID（跨平台一致，两键即两账号）
-// ——同样必须分行。其余供应商折叠为单行（同名择优）。
-const MULTI_ACCOUNT_PROVIDER_IDS = new Set(['claude', 'codex', 'opencode', 'openrouter', 'thirdparty', 'mimo', 'minimax', 'deepseek', 'zai', 'cursor', 'volcengine', 'alibaba']);
+// ——同样必须分行。notion 的配额按用户+工作区生效，其复合键可跨端移植，
+// 既不能按 provider 折叠也不能按邮箱折叠。其余供应商折叠为单行（同名择优）。
+const MULTI_ACCOUNT_PROVIDER_IDS = new Set(['claude', 'codex', 'opencode', 'openrouter', 'thirdparty', 'mimo', 'minimax', 'deepseek', 'zai', 'cursor', 'volcengine', 'alibaba', 'notion']);
 
 function providerCollapseKey(provider) {
+  // Known WorkBuddy identities survive missing credentials and refresh-token
+  // rotation. Keep every account separate even while its login is unavailable.
+  if (provider.provider === 'workbuddy' && provider.accountKey) return providerAggregateKey(provider);
   // Antigravity account keys are portable only when a normalized Google email
   // proves the identity. Anonymous RPC fallback keys are local observations,
   // so keep the device scope established by providerAggregateKey()——与集合
@@ -988,14 +994,23 @@ function aggregateLimits(devices, staleAfterMs = 0, nowMs = Date.now()) {
   // hashes to different accountKeys (keychain identity vs file path), so byKey
   // keeps them as separate entries; without this pass the renderer's per-provider
   // Map.set() would arbitrarily overwrite the fresh one with the stale one.
+  const hasKnownWorkbuddyAccount = Array.from(byKey.values()).some((candidate) =>
+    candidate.provider === 'workbuddy' && candidate.accountKey && !isWorkbuddyPlaceholder(candidate));
   const byProvider = new Map();
   for (const candidate of byKey.values()) {
+    // A local-app sentinel is an onboarding hint, not an extra account. Real
+    // identities keep their own failure hints even when none has credentials.
+    if (hasKnownWorkbuddyAccount && isWorkbuddyPlaceholder(candidate)) continue;
+    const knownWorkbuddyAccount = candidate.provider === 'workbuddy' && candidate.accountKey
+      && !isWorkbuddyPlaceholder(candidate);
     const hasFreshObservation = providersWithFreshObservations.has(candidate.provider);
-    if (candidate.stale && hasFreshObservation) continue;
+    // Fresh siblings cannot establish freshness for a different account. The
+    // first pass already chooses the best observation of each exact identity.
+    if (!knownWorkbuddyAccount && candidate.stale && hasFreshObservation) continue;
     const configuredProviders = hasFreshObservation
       ? providersWithFreshConfiguredAccounts
       : providersWithConfiguredAccounts;
-    if (!isConfiguredProvider(candidate) && configuredProviders.has(candidate.provider)) continue;
+    if (!knownWorkbuddyAccount && !isConfiguredProvider(candidate) && configuredProviders.has(candidate.provider)) continue;
     const collapseKey = providerCollapseKey(candidate);
     byProvider.set(collapseKey, pickBetterProvider(byProvider.get(collapseKey), candidate));
   }
