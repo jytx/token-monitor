@@ -228,7 +228,7 @@
         parentClient: normalizedId(session.parentClient || session.client),
         parentSessionId: String(session.parentSessionId || ''),
         grokBotSession: session.grokBotSession,
-        title: String(session.title || ''),
+        title: sessionRowsApi.sessionTitleForDisplay(session),
         projectLabel: String(session.projectLabel || ''),
         // Carried so the renderer keys its state map and its flare cache on
         // the same identity this projection used, instead of re-deriving one
@@ -297,7 +297,7 @@
         key: `session:${key}`, kind: 'session', client,
         clientLabel: options.clientLabels?.[client] || client,
         nativeSessionId: normalizedId(session.nativeSessionId), t3ThreadId: String(session.t3ThreadId || ''),
-        name: String(session.title || session.projectLabel || sessionId.slice(0, 12) || '—'),
+        name: sessionRowsApi.sessionTitleForDisplay(session) || String(session.projectLabel || sessionId.slice(0, 12) || '—'),
         titled: Boolean(session.title || session.projectLabel),
         modelTokens: models,
         value: finite(session.totalTokens) || 0, cost: finite(session.costUsd ?? session.reportedCostUsd) || 0,
@@ -712,7 +712,8 @@
   }
 
   // Two answers, because the rail and the subscription matcher want different
-  // ones. `byId` is what the cell draws, so it is gated on `hasReportableData`.
+  // ones. `byId` is what the cell draws, gated on `hasReportableData` for the
+  // ordinary rail; the top detail opts into aggregate failures.
   // `allById` is every account the provider has, gate ignored, because a
   // subscription binds to the account rather than to the row.
   //
@@ -745,7 +746,9 @@
     }
     for (const provider of providers) {
       const id = normalizedId(provider?.provider);
-      if (!id || !hasReportableData(provider)) continue;
+      // The top entry's detail keeps unavailable accounts in the aggregate,
+      // with the shared view's status/recovery UI. The ordinary rail stays gated.
+      if (!id || (!options.includeUnavailableAccounts && !hasReportableData(provider))) continue;
       if (!byId.has(id)) byId.set(id, []);
       byId.get(id).push(provider);
     }
