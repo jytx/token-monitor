@@ -18,6 +18,29 @@ function trayQuotaPicks(stats, settings) {
   return pick === undefined ? null : pick ? [pick] : [];
 }
 
+// 同一供应商的多条 legacy 记录（无 accountKey）同时入选 picks 时，
+// (provider, '') 区分不开两条 source，resolve 阶段会都落到 remaining
+// 最低的那条记录上。这里为每条 pick 生成仅存在于刘海解析输入中的合成
+// accountKey（不进 wire、不进存储），让每条 source 精确绑回自己的记录；
+// 有真实 accountKey 或每供应商仅一条 pick 时保持原样。
+function notchPickKeys(picks) {
+  const totals = new Map();
+  for (const pick of picks) totals.set(pick.provider, (totals.get(pick.provider) || 0) + 1);
+  const seen = new Map();
+  return picks.map((pick) => {
+    if (pick.providerRecord.accountKey) return pick.providerRecord.accountKey;
+    if ((totals.get(pick.provider) || 0) <= 1) return '';
+    const index = (seen.get(pick.provider) || 0) + 1;
+    seen.set(pick.provider, index);
+    return `notch-pick-${pick.provider}-${index}`;
+  });
+}
+
+// 合成 key 只注入解析用的浅拷贝记录，原记录保持只读。
+function notchPickRecord(pick, key) {
+  return key && !pick.providerRecord.accountKey ? { ...pick.providerRecord, accountKey: key } : pick.providerRecord;
+}
+
 function summaryLayout(settings, stats, picks = trayQuotaPicks(stats, settings)) {
   if (settings.notchFollowTray === false) return trayLayout.normalizeTrayLayout(settings.notchCustomLayout);
   const mode = settings.trayContent || 'tokens';
@@ -34,11 +57,12 @@ function summaryLayout(settings, stats, picks = trayQuotaPicks(stats, settings))
   if (mode === 'liveTokenRate') items.push(make('liveTokenRate', 'notch-rate'));
   if (picks) {
     if (picks.length) icon.source.provider = picks[0].provider;
+    const keys = notchPickKeys(picks);
     const pair = picks.length > 1
-      ? picks.map(pick => ({ pick, window: pick.primaryWindow }))
-      : picks.length ? [{ pick: picks[0], window: picks[0].primaryWindow }, { pick: picks[0], window: picks[0].secondaryWindow }] : [];
-    const sourceFor = ({ pick, window }) => ({
-      provider: pick.provider, accountMode: 'specific', accountKey: pick.providerRecord.accountKey || '',
+      ? picks.map((pick, index) => ({ pick, key: keys[index], window: pick.primaryWindow }))
+      : picks.length ? [{ pick: picks[0], key: keys[0], window: picks[0].primaryWindow }, { pick: picks[0], key: keys[0], window: picks[0].secondaryWindow }] : [];
+    const sourceFor = ({ pick, key, window }) => ({
+      provider: pick.provider, accountMode: 'specific', accountKey: pick.providerRecord.accountKey || key,
       window: window ? trayLayout.windowKey(window) : 'secondary',
       valueMode: settings.showLimitUsed ? 'used' : 'remaining', creditsDisplay: 'percent'
     });
@@ -99,7 +123,10 @@ function buildNotchData(stats, cells, settings, options = {}) {
   const layout = summaryLayout(settings, stats, picks);
   // Preserve the selected record even for legacy accounts without accountKey:
   // reselecting all records can borrow a secondary window from another account.
-  const summaryStats = picks ? { ...stats, limits: { ...stats?.limits, providers: picks.map(pick => pick.providerRecord) } } : stats;
+  // Same-provider legacy duplicates additionally need the synthetic keys so
+  // each source resolves to exactly its own record.
+  const pickKeys = notchPickKeys(picks || []);
+  const summaryStats = picks ? { ...stats, limits: { ...stats?.limits, providers: picks.map((pick, index) => notchPickRecord(pick, pickKeys[index])) } } : stats;
   const resolved = trayLayout.resolveTrayLayout(layout, summaryStats, options);
   resolved.needsClock = trayLayout.trayLayoutNeedsClock(layout);
   for (const output of resolved.items) {
