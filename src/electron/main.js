@@ -424,7 +424,7 @@ const {
 const { applyWindowsChrome } = require('./windowsChrome');
 const { installWindowsNonActivatingInput } = require('./windowsNonActivatingInput');
 const { canUseEdgeDock, createEdgeDockController, edgeDockSupported } = require('./edgeDock/controller');
-const { createNotchController, normalizeNotchStyle, normalizeNotchShape, normalizeNotchDetailSide } = require('./notch/controller');
+const { createNotchController, normalizeNotchStyle, normalizeNotchShape, normalizeNotchDetailSide, normalizeNotchHoverAction, normalizeNotchHoverDelay } = require('./notch/controller');
 const { buildNotchData, summaryLayout: notchSummaryLayout } = require('./notch/data');
 const trayLayoutApi = require('../shared/trayLayout');
 const { createFullScreenProbe } = require('./edgeDock/fullScreenProbe');
@@ -443,6 +443,9 @@ const { normalizeBackgroundImageOpacity } = require('./renderer/glassRendering')
 const tokenRateApi = require('./renderer/tokenRatePresentation');
 const { toPolygons } = require('./renderer/edgeDock/shapes');
 const { rasterizeMask } = require('./edgeDock/mask');
+const { NOTCH_BLUR_ALPHA, NOTCH_BLUR_RADIUS, NOTCH_BLUR_STRENGTH, notchBlurMask } = require('./notch/blur');
+const { applyProgressiveBlur } = require('./notch/macProgressiveBlur');
+const { monitorMacPrimaryPress } = require('./notch/macPrimaryPress');
 const { applyVibrancyMask } = require('./edgeDock/macVibrancyMask');
 const { performMacHaptic } = require('./edgeDock/macHaptics');
 const { primaryButtonDown } = require('./edgeDock/pointerButtons');
@@ -453,7 +456,10 @@ const {
 } = require('./windowsBackdropMode');
 const { applyWindowsAccentBlur } = require('./windowsBackdrop');
 const {
-  MAC_BACKDROP_LIQUID_GLASS,
+  isLiquidGlassBackdrop,
+  liquidGlassStyle,
+  liquidGlassTint,
+  normalizeLiquidGlassTint,
   normalizeMacBackdropMode,
   normalizeEdgeDockBackdropMode,
   edgeDockBackdropMode
@@ -589,6 +595,8 @@ function defaultSettings() {
     refreshMs: Number(process.env.TOKEN_MONITOR_WIDGET_REFRESH_MS || 15000),
     glassOpacity: 68,
     glassBlur: 32,
+    macGlassTint: 0,
+    macClearGlassTint: 35,
     backgroundImageOpacity: 28,
     systemGlass: true,
     windowsBackdrop: 'acrylic',
@@ -624,7 +632,7 @@ function defaultSettings() {
     floatingBubbleCustomLayout: createDefaultTrayLayout(),
     floatingBubbleBounds: null,
     notchEnabled: false,
-    notchStyle: 'black',
+    notchStyle: 'inherit',
     notchShape: 'auto',
     notchFollowTray: true,
     notchSummaryEnabled: true,
@@ -633,9 +641,11 @@ function defaultSettings() {
     notchItems: null,
     notchDetailSide: 'right',
     notchRunningIndicatorEnabled: false,
-    notchExpandOnApproach: true,
+    notchHoverAction: 'peek',
+    notchHoverDelay: 0,
     notchAvoidMenuBar: true,
-    notchHaptic: false,
+    notchHaptic: true,
+    notchProgressiveBlur: true,
     notchHideSummaryInFullScreen: true,
     notchRefreshEnabled: false,
     notchSize: 'medium',
@@ -2718,6 +2728,8 @@ function readSettings() {
     merged.sessionTitlesEnabled = parseBoolean(merged.sessionTitlesEnabled, true);
     merged.sessionContextMetric = normalizeSessionContextMetric(merged.sessionContextMetric);
     merged.reduceMotion = motionPreferenceApi.normalize(merged.reduceMotion);
+    merged.macGlassTint = normalizeLiquidGlassTint(merged.macGlassTint, 'liquid-glass');
+    merged.macClearGlassTint = normalizeLiquidGlassTint(merged.macClearGlassTint, 'liquid-glass-clear');
     merged.tokenNumberAnimation = tokenNumberAnimationApi.normalize(merged.tokenNumberAnimation);
     merged.showLiveTokenRate = parseBoolean(merged.showLiveTokenRate, false);
     merged.liveTokenRateScope = normalizeLiveTokenRateScope(merged.liveTokenRateScope);
@@ -2779,9 +2791,11 @@ function readSettings() {
     merged.notchItems = normalizeEdgeDockItems(merged.notchItems);
     merged.notchDetailSide = normalizeNotchDetailSide(merged.notchDetailSide);
     merged.notchRunningIndicatorEnabled = parseBoolean(merged.notchRunningIndicatorEnabled, false);
-    merged.notchExpandOnApproach = parseBoolean(merged.notchExpandOnApproach, true);
+    merged.notchHoverAction = normalizeNotchHoverAction(merged.notchHoverAction);
+    merged.notchHoverDelay = normalizeNotchHoverDelay(merged.notchHoverDelay);
     merged.notchAvoidMenuBar = parseBoolean(merged.notchAvoidMenuBar, true);
-    merged.notchHaptic = parseBoolean(merged.notchHaptic, false);
+    merged.notchHaptic = parseBoolean(merged.notchHaptic, true);
+    merged.notchProgressiveBlur = parseBoolean(merged.notchProgressiveBlur, true);
     merged.notchHideSummaryInFullScreen = parseBoolean(merged.notchHideSummaryInFullScreen, true);
     merged.notchRefreshEnabled = parseBoolean(merged.notchRefreshEnabled, false);
     merged.notchFollowTray = parseBoolean(merged.notchFollowTray, true);
@@ -3076,7 +3090,9 @@ function nativeBlurEnabled(source = settings) {
 function nativeMaterialOptions(source = settings, dashboard = false) {
   return {
     enabled: nativeBlurEnabled(source),
-    liquidGlass: normalizeMacBackdropMode(source.macBackdrop) === MAC_BACKDROP_LIQUID_GLASS,
+    liquidGlass: isLiquidGlassBackdrop(source.macBackdrop),
+    style: liquidGlassStyle(source.macBackdrop),
+    tintOpacity: liquidGlassTint(source),
     opaque: dashboard && source.dashboardFlat === true,
     reducedTransparency: nativeTheme.prefersReducedTransparency === true,
     highContrast: nativeTheme.shouldUseHighContrastColors === true,
@@ -5599,6 +5615,31 @@ function pushSettingsToRenderer() {
 
 let edgeDockController = null;
 let notchController = null;
+let dockAppearancePreview = null;
+
+function dockAppearanceSettings() {
+  return dockAppearancePreview ? { ...settings, ...dockAppearancePreview } : settings;
+}
+
+function previewDockAppearance(patch) {
+  const preview = {};
+  for (const key of ['glassOpacity', 'glassBlur']) {
+    const value = Number(patch?.[key]);
+    if (patch?.[key] !== undefined && Number.isFinite(value)) preview[key] = Math.max(0, Math.min(100, value));
+  }
+  for (const [key, mode] of [['macGlassTint', 'liquid-glass'], ['macClearGlassTint', 'liquid-glass-clear']]) {
+    if (patch?.[key] !== undefined) preview[key] = normalizeLiquidGlassTint(patch[key], mode);
+  }
+  if (Object.keys(preview).length === 0) return;
+  // A range input previews before its change event commits the preference.
+  // Share glass controls with the floating surfaces, keeping their own styles
+  // and saved settings intact until the ordinary settings sync replaces it.
+  dockAppearancePreview = { ...dockAppearancePreview, ...preview };
+  for (const controller of [edgeDockController, notchController]) {
+    if (controller?.isRunning()) controller.setAppearance(dockAppearancePreview, { preview: true });
+  }
+}
+
 let notchRateTimer = null;
 const notchRateTrackers = new Map();
 
@@ -5651,13 +5692,15 @@ function toggleDockRateMode() {
   pushSettingsToRenderer();
 }
 
+let notchBlurMasks = null;
+
 function ensureNotchController() {
   if (notchController) return notchController;
   notchController = createNotchController({
     BrowserWindow, ipcMain, screen, platform: process.platform,
     rendererDir: path.join(__dirname, 'renderer'),
     preloadPath: path.join(__dirname, 'notch', 'preload.js'),
-    getSettings: () => settings,
+    getSettings: () => dockAppearanceSettings(),
     onCapabilitiesChanged: (value) => sendMainWindowEvent('topNotch:capabilities', value, () => notchController?.getCapabilities() === value),
     nativeGlass: () => nativeBlurEnabled(),
     liquidGlass: () => {
@@ -5675,7 +5718,23 @@ function ensureNotchController() {
     canRefreshLimits: () => canRefreshEdgeDockStats(),
     onRefreshLimits: () => refreshStatsFromEdgeDock(),
     installNonActivatingInput: (win) => preventAppActivation(win),
+    blurAvailable: () => nativeTheme.prefersReducedTransparency !== true,
+    applyBlurMask: (win, mask, display) => {
+      const scale = display?.scaleFactor || 2;
+      const key = JSON.stringify([mask, scale]);
+      if (notchBlurMasks?.key !== key) {
+        const png = (options) => {
+          const { buffer, pixelWidth, pixelHeight } = notchBlurMask({ ...mask, ...options });
+          return nativeImage.createFromBitmap(buffer, { width: pixelWidth, height: pixelHeight }).toPNG();
+        };
+        // The blur mask is sampled per point; the visible fade is drawn at device scale.
+        notchBlurMasks = { key, alphaPng: png({ scale, curve: NOTCH_BLUR_ALPHA }), blurPng: png({ scale: 1, curve: NOTCH_BLUR_STRENGTH }) };
+      }
+      return applyProgressiveBlur(win, { alphaPng: notchBlurMasks.alphaPng, blurPng: notchBlurMasks.blurPng,
+        width: mask.width, height: mask.height, radius: NOTCH_BLUR_RADIUS });
+    },
     primaryButtonDown: () => primaryButtonDown(process.platform),
+    monitorPrimaryPress: (onPress) => monitorMacPrimaryPress(onPress, { logger: (message) => console.log(message) }),
     performHaptic: (pattern, performanceTime) => performMacHaptic({ pattern, performanceTime }),
     isFullScreen: createFullScreenProbe({ platform: process.platform, screen, logger: (message) => console.log(message) }),
     onSwitchCodexAccount: (accountId) => switchCodexAccountFromEdgeDock(accountId),
@@ -6032,11 +6091,13 @@ function ensureEdgeDockController() {
     // same terms as the main window: Reduce Transparency hands the surface back
     // to the HUD material.
     liquidGlass: () => {
-      const options = nativeMaterialOptions();
+      const source = dockAppearanceSettings();
+      const options = nativeMaterialOptions(source);
       const wanted = process.platform === 'darwin' && options.enabled
-        && edgeDockBackdropMode(settings) === MAC_BACKDROP_LIQUID_GLASS
+        && isLiquidGlassBackdrop(edgeDockBackdropMode(source))
         && !options.reducedTransparency && Number.parseInt(os.release(), 10) >= 25;
-      return wanted ? { dark: options.dark } : null;
+      const mode = edgeDockBackdropMode(source);
+      return wanted ? { dark: options.dark, style: liquidGlassStyle(mode), tintOpacity: liquidGlassTint(source, mode) } : null;
     },
     createGlass: (win) => createMacLiquidGlass(win, { shaped: true }),
     // The renderer reads this preference through a media query, which works on both
@@ -6081,6 +6142,7 @@ function ensureEdgeDockController() {
 }
 
 function syncDockSurfaces(rendererSettings) {
+  dockAppearancePreview = null;
   if (!settings) return;
   syncNotch(rendererSettings);
   if (!canUseEdgeDock(settings)) {
@@ -7927,6 +7989,8 @@ app.whenReady().then(() => {
       refreshMs: Math.max(5000, Number(patch.refreshMs ?? settings.refreshMs ?? 15000)),
       glassOpacity: Math.max(0, Math.min(100, Number(patch.glassOpacity ?? settings.glassOpacity ?? 68))),
       glassBlur: Math.max(0, Math.min(100, Number(patch.glassBlur ?? settings.glassBlur ?? 32))),
+      macGlassTint: normalizeLiquidGlassTint(patch.macGlassTint ?? settings.macGlassTint, 'liquid-glass'),
+      macClearGlassTint: normalizeLiquidGlassTint(patch.macClearGlassTint ?? settings.macClearGlassTint, 'liquid-glass-clear'),
       backgroundImageOpacity: normalizeBackgroundImageOpacity(patch.backgroundImageOpacity ?? settings.backgroundImageOpacity),
       systemGlass: patch.systemGlass ?? settings.systemGlass ?? true,
       windowsBackdrop: normalizeWindowsBackdropMode(patch.windowsBackdrop ?? settings.windowsBackdrop),
@@ -7959,9 +8023,11 @@ app.whenReady().then(() => {
       notchItems: normalizeEdgeDockItems('notchItems' in (patch || {}) ? patch.notchItems : settings.notchItems),
       notchDetailSide: normalizeNotchDetailSide(patch.notchDetailSide ?? settings.notchDetailSide),
       notchRunningIndicatorEnabled: parseBoolean(patch.notchRunningIndicatorEnabled ?? settings.notchRunningIndicatorEnabled, false),
-      notchExpandOnApproach: parseBoolean(patch.notchExpandOnApproach ?? settings.notchExpandOnApproach, true),
+      notchHoverAction: normalizeNotchHoverAction(patch.notchHoverAction ?? settings.notchHoverAction),
+      notchHoverDelay: normalizeNotchHoverDelay(patch.notchHoverDelay ?? settings.notchHoverDelay),
       notchAvoidMenuBar: parseBoolean(patch.notchAvoidMenuBar ?? settings.notchAvoidMenuBar, true),
-      notchHaptic: parseBoolean(patch.notchHaptic ?? settings.notchHaptic, false),
+      notchHaptic: parseBoolean(patch.notchHaptic ?? settings.notchHaptic, true),
+      notchProgressiveBlur: parseBoolean(patch.notchProgressiveBlur ?? settings.notchProgressiveBlur, true),
       notchHideSummaryInFullScreen: parseBoolean(patch.notchHideSummaryInFullScreen ?? settings.notchHideSummaryInFullScreen, true),
       notchRefreshEnabled: parseBoolean(patch.notchRefreshEnabled ?? settings.notchRefreshEnabled, false),
       notchFollowTray: parseBoolean(patch.notchFollowTray ?? settings.notchFollowTray, true),
@@ -8219,10 +8285,11 @@ app.whenReady().then(() => {
     return settingsForRenderer();
   }
   ipcMain.handle('appearance:preview', (event, patch) => {
-    // Preview only the requesting surface: another window still renders its
-    // saved theme until settings:update broadcasts the committed preference.
+    // Other document windows retain their saved theme; glass previews
+    // also reach the floating surfaces so the range control has one meaning.
     const win = BrowserWindow.fromWebContents(event.sender);
     syncNativeMaterialVisibility(win, nativeMaterialOptions({ ...settings, ...patch }, win === dashboardWindow));
+    if (win === mainWindow || win === dashboardWindow) previewDockAppearance(patch);
     if (patch && patch.zoomFactor !== undefined && mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.setZoomFactor(clampZoom(patch.zoomFactor));
     }

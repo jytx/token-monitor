@@ -365,6 +365,7 @@ state.sessionSettingsExpanded = false;
 state.homeActivitySettingsExpanded = false;
 state.settingsSections = Object.fromEntries(SETTINGS_SECTION_IDS.map((id) => [id, false]));
 const defaultAppearance = { glassOpacity: 68, glassBlur: 32, backgroundImageOpacity: 28, zoomFactor: 1, systemGlass: true, windowsBackdrop: 'acrylic', macBackdrop: 'vibrancy', reduceMotion: 'system', tokenNumberAnimation: 'roll', showLiveDot: true, showToolIcons: true, titleIconOnly: true, showCompactTotalTokens: false, showLiveTokenRate: false, liveTokenRateScope: 'all', compactTokenUnits: 'western', settingsInTitlebar: false };
+const nativeGlassTintSettings = [['macGlassTint', 'liquid-glass'], ['macClearGlassTint', 'liquid-glass-clear']];
 let nativeMaterialState = glassRenderingApi.normalizeNativeMaterialState();
 let nativeMaterialRevision = 0;
 let appearancePreview = {};
@@ -403,6 +404,7 @@ Object.assign(els, {
   backHomeButton: document.getElementById('backHomeButton'),
   systemGlassInputs: Array.from(document.querySelectorAll('input[name="systemGlassOption"]')),
   floatingBubbleOptions: document.getElementById('floatingBubbleOptions'),
+  experimentalFeaturesGroup: document.getElementById('experimentalFeaturesGroup'),
   notchFeature: document.getElementById('notchFeature'),
   notchInput: document.getElementById('notchInput'),
   notchOptions: document.getElementById('notchOptions'),
@@ -417,7 +419,11 @@ Object.assign(els, {
   notchRunningIndicatorInput: document.getElementById('notchRunningIndicatorInput'),
   notchRunningIndicatorRow: document.getElementById('notchRunningIndicatorRow'),
   notchHapticInput: document.getElementById('notchHapticInput'),
-  notchExpandOnApproachInput: document.getElementById('notchExpandOnApproachInput'),
+  notchHoverActionInputs: Array.from(document.querySelectorAll('input[name="notchHoverAction"]')),
+  notchHoverDelayInput: document.getElementById('notchHoverDelayInput'),
+  notchHoverDelayRow: document.getElementById('notchHoverDelayRow'),
+  resetNotchHoverDelayButton: document.getElementById('resetNotchHoverDelayButton'),
+  notchProgressiveBlurInput: document.getElementById('notchProgressiveBlurInput'),
   notchAvoidMenuBarInput: document.getElementById('notchAvoidMenuBarInput'),
   notchHideSummaryInFullScreenInput: document.getElementById('notchHideSummaryInFullScreenInput'),
   notchSizeInputs: Array.from(document.querySelectorAll('input[name="notchSize"]')),
@@ -492,6 +498,13 @@ Object.assign(els, {
   windowsBackdropNote: document.getElementById('windowsBackdropNote'),
   macBackdropRow: document.getElementById('macBackdropRow'),
   macBackdropInput: document.getElementById('macBackdropInput'),
+  glassOpacityRow: document.getElementById('glassOpacityRow'),
+  macGlassTintRow: document.getElementById('macGlassTintRow'),
+  macGlassTintInput: document.getElementById('macGlassTintInput'),
+  macGlassTintReset: document.getElementById('macGlassTintReset'),
+  macClearGlassTintRow: document.getElementById('macClearGlassTintRow'),
+  macClearGlassTintInput: document.getElementById('macClearGlassTintInput'),
+  macClearGlassTintReset: document.getElementById('macClearGlassTintReset'),
   clearSessionUsageArchiveButton: document.getElementById('clearSessionUsageArchiveButton'),
   startupGroup: document.getElementById('startupGroup'),
   startAtLoginInput: document.getElementById('startAtLoginInput'),
@@ -7660,6 +7673,15 @@ function applyAppearanceSettings(settings) {
   document.documentElement.style.setProperty('--control-alpha', (0.03 + depth * 0.045).toFixed(3));
   document.documentElement.classList.toggle('system-glass-disabled', systemGlassDisabled);
   const nativeMaterial = glassRenderingApi.usesNativeMaterial(nativeMaterialState);
+  const nativeTint = nativeMaterialState.type === 'liquid-glass';
+  els.glassOpacityRow?.classList.toggle('hidden', nativeTint);
+  for (const [key, mode] of nativeGlassTintSettings) {
+    const active = nativeTint && macGlass.backdropMode === mode;
+    els[`${key}Row`]?.classList.toggle('hidden', !active);
+    for (const control of [els[`${key}Input`], els[`${key}Reset`]]) {
+      if (control) control.disabled = !active;
+    }
+  }
   for (const control of [els.glassInput, els.blurInput, els.resetGlassButton, els.resetDepthButton]) {
     if (control) control.disabled = nativeMaterial;
   }
@@ -8452,6 +8474,9 @@ function appearancePatchFromControls() {
     settingsInTitlebar: Boolean(els.swapSettingsRefreshInput.checked),
     glassOpacity: Number(els.glassInput.value === '' ? defaultAppearance.glassOpacity : els.glassInput.value),
     glassBlur: Number(els.blurInput.value === '' ? defaultAppearance.glassBlur : els.blurInput.value),
+    ...Object.fromEntries(nativeGlassTintSettings.map(([key, mode]) => [key,
+      macBackdropApi.normalizeLiquidGlassTint(els[`${key}Input`]?.value, mode)
+    ])),
     backgroundImageOpacity: Number(els.backgroundImageOpacityInput?.value || defaultAppearance.backgroundImageOpacity),
     zoomFactor: Number(els.zoomInput.value === '' ? defaultAppearance.zoomFactor * 100 : els.zoomInput.value) / 100
   };
@@ -8554,6 +8579,7 @@ function syncSliderRow(input) {
 
 function syncSliderRows() {
   syncSliderRow(els.glassInput);
+  for (const [key] of nativeGlassTintSettings) syncSliderRow(els[`${key}Input`]);
   syncSliderRow(els.blurInput);
   syncSliderRow(els.backgroundImageOpacityInput);
   syncSliderRow(els.zoomInput);
@@ -9422,6 +9448,9 @@ function syncSettingsForm() {
         : t('settings.startup.launchAtSignIn');
   }
   els.glassInput.value = String(state.settings.glassOpacity ?? 68);
+  for (const [key, mode] of nativeGlassTintSettings) {
+    if (els[`${key}Input`]) els[`${key}Input`].value = String(macBackdropApi.normalizeLiquidGlassTint(state.settings[key], mode));
+  }
   els.blurInput.value = String(state.settings.glassBlur ?? 32);
   if (els.backgroundImageOpacityInput) els.backgroundImageOpacityInput.value = String(state.settings.backgroundImageOpacity ?? defaultAppearance.backgroundImageOpacity);
   els.zoomInput.value = String(Math.round((Number(state.settings.zoomFactor) || 1) * 100));
@@ -13132,6 +13161,16 @@ els.resetGlassButton.addEventListener('click', async () => {
   applyAppearanceFromControls();
   await saveSettings({ glassOpacity: defaultAppearance.glassOpacity });
 });
+for (const [key, mode] of nativeGlassTintSettings) {
+  els[`${key}Input`]?.addEventListener('input', applyAppearanceFromControls);
+  els[`${key}Input`]?.addEventListener('change', saveAppearanceFromControls);
+  els[`${key}Reset`]?.addEventListener('click', async () => {
+    const value = macBackdropApi.normalizeLiquidGlassTint(undefined, mode);
+    els[`${key}Input`].value = String(value);
+    applyAppearanceFromControls();
+    await saveSettings({ [key]: value });
+  });
+}
 els.resetDepthButton.addEventListener('click', async () => {
   els.blurInput.value = String(defaultAppearance.glassBlur);
   applyAppearanceFromControls();
@@ -13279,16 +13318,38 @@ function syncDockSizeControls(surface) {
 // saved choice the system cannot draw shows as the Frosted Glass it falls back to.
 // Appearance previews carry only the controls they own, so the notch style is
 // read from the saved settings underneath them.
+const NOTCH_HOVER_DELAY_DEFAULT_MS = 0;
+
+// Hover either grows the resting entry (a click opens it) or opens it after
+// the chosen duration; the duration only applies to the second.
+function syncNotchHoverControls() {
+  const action = state.settings?.notchHoverAction === 'open' ? 'open' : 'peek';
+  for (const input of els.notchHoverActionInputs) input.checked = input.value === action;
+  els.notchHoverDelayRow?.classList.toggle('hidden', action !== 'open');
+  if (els.notchHoverDelayInput && document.activeElement !== els.notchHoverDelayInput) {
+    const delay = Number(state.settings?.notchHoverDelay);
+    els.notchHoverDelayInput.value = String(Number.isFinite(delay) ? delay : NOTCH_HOVER_DELAY_DEFAULT_MS);
+  }
+  syncNotchHoverDelayValue();
+}
+
+function syncNotchHoverDelayValue() {
+  const value = els.notchHoverDelayRow?.querySelector('.slider-value');
+  if (value && els.notchHoverDelayInput) value.textContent = `${(Number(els.notchHoverDelayInput.value) / 1000).toFixed(1)} s`;
+}
+
 function syncNotchStyleInput(preview) {
   if (!els.notchStyleInput) return;
   const settings = Object.assign({}, state.settings, ...pendingSettingsPatches, preview);
   const { showBackdropControl } = macBackdropApi.appearanceState(settings, {
     liquidGlassSupported: nativeMaterialState.liquidGlassSupported
   });
-  const liquidGlass = els.notchStyleInput.querySelector('option[value="liquid-glass"]');
-  if (liquidGlass) liquidGlass.hidden = liquidGlass.disabled = !showBackdropControl;
-  const style = settings?.notchStyle || 'black';
-  els.notchStyleInput.value = style === 'liquid-glass' && !showBackdropControl ? 'vibrancy' : style;
+  for (const value of ['liquid-glass', 'liquid-glass-clear']) {
+    const option = els.notchStyleInput.querySelector(`option[value="${value}"]`);
+    if (option) option.hidden = option.disabled = !showBackdropControl;
+  }
+  const style = settings?.notchStyle || 'inherit';
+  els.notchStyleInput.value = macBackdropApi.isLiquidGlassBackdrop(style) && !showBackdropControl ? 'vibrancy' : style;
 }
 
 function syncNotchCapabilities() {
@@ -13317,8 +13378,10 @@ function syncDockControls() {
   if (els.edgeDockMacBackdropInput) {
     els.edgeDockMacBackdropInput.value = macBackdropApi.normalizeEdgeDockBackdropMode(state.settings?.edgeDockMacBackdrop);
   }
-  const notchEnabled = state.appInfo?.platform === 'darwin' && state.settings?.notchEnabled === true;
-  els.notchFeature?.classList.toggle('hidden', state.appInfo?.platform !== 'darwin');
+  const notchAvailable = state.appInfo?.platform === 'darwin';
+  const notchEnabled = notchAvailable && state.settings?.notchEnabled === true;
+  els.experimentalFeaturesGroup?.classList.toggle('hidden', !notchAvailable);
+  els.notchFeature?.classList.toggle('hidden', !notchAvailable);
   if (els.notchInput) els.notchInput.checked = notchEnabled;
   els.notchOptions?.classList.toggle('hidden', !notchEnabled);
   syncNotchStyleInput();
@@ -13328,8 +13391,9 @@ function syncDockControls() {
   if (els.notchDetailSideInput) els.notchDetailSideInput.value = state.settings?.notchDetailSide || 'right';
   if (els.notchRunningIndicatorInput) els.notchRunningIndicatorInput.checked = state.settings?.notchRunningIndicatorEnabled === true;
   syncNotchCapabilities();
-  if (els.notchHapticInput) els.notchHapticInput.checked = state.settings?.notchHaptic === true;
-  if (els.notchExpandOnApproachInput) els.notchExpandOnApproachInput.checked = state.settings?.notchExpandOnApproach !== false;
+  if (els.notchProgressiveBlurInput) els.notchProgressiveBlurInput.checked = state.settings?.notchProgressiveBlur !== false;
+  if (els.notchHapticInput) els.notchHapticInput.checked = state.settings?.notchHaptic !== false;
+  syncNotchHoverControls();
   if (els.notchAvoidMenuBarInput) els.notchAvoidMenuBarInput.checked = state.settings?.notchAvoidMenuBar !== false;
   if (els.notchHideSummaryInFullScreenInput) els.notchHideSummaryInFullScreenInput.checked = state.settings?.notchHideSummaryInFullScreen !== false;
   els.edgeDockComposerRow?.classList.toggle('hidden', !enabled);
@@ -13387,8 +13451,26 @@ els.notchSummaryInput?.addEventListener('change', () => {
 els.notchHideSummaryInFullScreenInput?.addEventListener('change', () => {
   void saveSettings({ notchHideSummaryInFullScreen: els.notchHideSummaryInFullScreenInput.checked });
 });
-els.notchExpandOnApproachInput?.addEventListener('change', () => {
-  void saveSettings({ notchExpandOnApproach: els.notchExpandOnApproachInput.checked });
+for (const input of els.notchHoverActionInputs) {
+  input.addEventListener('change', () => {
+    if (!input.checked) return;
+    state.settings.notchHoverAction = input.value;
+    syncNotchHoverControls();
+    void saveSettings({ notchHoverAction: input.value });
+  });
+}
+els.notchProgressiveBlurInput?.addEventListener('change', () => {
+  void saveSettings({ notchProgressiveBlur: els.notchProgressiveBlurInput.checked });
+});
+els.notchHoverDelayInput?.addEventListener('input', () => syncNotchHoverDelayValue());
+els.resetNotchHoverDelayButton?.addEventListener('click', () => {
+  if (!els.notchHoverDelayInput) return;
+  els.notchHoverDelayInput.value = String(NOTCH_HOVER_DELAY_DEFAULT_MS);
+  syncNotchHoverDelayValue();
+  void saveSettings({ notchHoverDelay: NOTCH_HOVER_DELAY_DEFAULT_MS });
+});
+els.notchHoverDelayInput?.addEventListener('change', () => {
+  void saveSettings({ notchHoverDelay: Number(els.notchHoverDelayInput.value) });
 });
 els.notchAvoidMenuBarInput?.addEventListener('change', () => {
   void saveSettings({ notchAvoidMenuBar: els.notchAvoidMenuBarInput.checked });
