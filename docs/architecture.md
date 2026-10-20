@@ -61,6 +61,8 @@ The collector owns one `selfSyncThrottle.js` instance shared by provider self-sy
 
 `SIGTERM` requests termination; it does not establish exit. Aborts, timeouts and pipe failures hold the replacement barrier until `close`, escalating to `SIGKILL` when needed. A bounded final grace reports `subprocess-termination-unconfirmed` instead of deadlocking; generation fences still reject late output.
 
+On Windows, tokscale scans and Antigravity syncs are lowered to below-normal priority right after spawn (`subprocessPriority.js`) to reduce CPU competition with foreground work. A subprocess still running after 10 seconds attempts to restore its starting priority, limiting prolonged low-priority delays under sustained CPU load. A subprocess that starts at below-normal or lower priority is left alone. Both adjustments are best effort and never fail collection. macOS and Linux retain their starting priority because unprivileged processes generally cannot restore a lowered nice value, which could delay collection beyond its timeout under contention.
+
 Failed usage reconfiguration restores the last-known-good runtime and retries the latest desired settings with bounded backoff. Exhaustion is reported; a newer setting starts a fresh retry budget.
 
 ### Usage worker
@@ -109,6 +111,16 @@ Sessions, Home and Edge Dock group the complete member set before applying displ
 ## Session title display
 
 `sessionTitlesEnabled` defaults on and affects Electron presentation only. `src/electron/sessionTitleDisplay.js` hides titles from snapshots, all-time pulls and detail headings without changing collection, metadata caches or local archives. Sync consent is independent, defaults off, and requires the [shared sync protocol](#shared-sync-content).
+
+## Notch presentation
+
+The experimental macOS Notch owns its fixed pages under `renderer/notch/` and shares data projection, formatting, account-title and plan semantics, and Home's compact window order (`homeOverview.compactWindowRank`) with the other surfaces. Stored `notchItems` now selects only limit providers, their order, hidden accounts and the Codex account policy; old usage items and pinned windows are ignored. `notchSummaryMode` defaults to `sessions` and deliberately does not convert the old follow-tray flag. The panel uses one shell renderer; details live in its fixed pages rather than a separate hover window. Attached glass uses the camera scrim as its only tint layer instead of adding the native tint again. Automatic quota alerts rank and display the tightest metered pool of the shared headline account; hidden or unselected accounts do not supply alerts.
+
+The resting Notch window passes the pointer through with moves forwarded, and takes input only while the pointer is on the visible entry, as the Edge Dock handle does. Do not bring back a system-wide mouse monitor: the click-through window let each observed click reach the app beneath as well. Page wheel events carry no gesture phase, so swipes tell momentum from a new swipe by reversal and by a rise after decay; a plain time gap blocks back-to-back swipes.
+
+Attached Liquid Glass updates the native camera scrim and outline together; a failed native update must immediately restore the SVG fallback. Hover geometry and summary content share the same animation progress; content scaling must preserve camera clearance even during spring overshoot. Visual transforms must not change measured summary widths.
+
+The seven-day chart takes its newest bar from live Today accounting and past days from History (`notch/history.js`). A missing day stays unknown, and reads as zero only when the transport is available and every joined device answered for its History. The answer is dropped when the backend generation, local date or History enablement changes; a new revision keeps the previous answer until the reload lands, and remote reloads are throttled to one a minute.
 
 ## Widget mode switching
 
