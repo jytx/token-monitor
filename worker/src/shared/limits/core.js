@@ -624,9 +624,11 @@ function isConfiguredProvider(provider) {
 // alibaba 并非用户维护的多账号，但会出现多个 accountKey——cursor 的 OAuth
 // 账号键天然多行，volcengine 的键来自 AK/SK 与区域（两键是 Coding/Agent
 // 套餐拆分），alibaba 的键是控制台账号 UID（跨平台一致，两键即两账号）
-// ——同样必须分行。notion 的配额按用户+工作区生效，其复合键可跨端移植，
-// 既不能按 provider 折叠也不能按邮箱折叠。其余供应商折叠为单行（同名择优）。
-const MULTI_ACCOUNT_PROVIDER_IDS = new Set(['claude', 'codex', 'opencode', 'openrouter', 'thirdparty', 'mimo', 'minimax', 'deepseek', 'zai', 'cursor', 'volcengine', 'alibaba', 'notion']);
+// ——同样必须分行。cline 的键标识各通道内的 API key 或登录账号 id，来自
+// 同步设备的不同凭据身份须分开保留，显示邮箱相同并不代表同一身份。
+// notion 的配额按用户+工作区生效，其复合键可跨端移植，既不能按 provider
+// 折叠也不能按邮箱折叠。其余供应商折叠为单行（同名择优）。
+const MULTI_ACCOUNT_PROVIDER_IDS = new Set(['claude', 'codex', 'opencode', 'openrouter', 'thirdparty', 'mimo', 'minimax', 'deepseek', 'zai', 'cursor', 'cline', 'volcengine', 'alibaba', 'notion']);
 
 function providerCollapseKey(provider) {
   // Known WorkBuddy identities survive missing credentials and refresh-token
