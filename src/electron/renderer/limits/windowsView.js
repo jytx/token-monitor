@@ -2134,7 +2134,7 @@
 
     head.append(title, value);
     item.append(openButton, head, detail);
-    openButton.title = t('limits.codexResetForecast.openSource');
+    openButton.setAttribute('aria-label', t('limits.codexResetForecast.openSource'));
     openButton.setAttribute('aria-label', [label.textContent, value.textContent, detail.textContent, t('limits.codexResetForecast.openSource')].filter(Boolean).join(', '));
     return item;
   }
@@ -2788,6 +2788,8 @@
     if (rows.length === 0) return null;
     const card = document.createElement('span');
     card.className = 'limit-detail-tooltip subscription-tooltip';
+    card.setAttribute('role', 'tooltip');
+    const notes = new Set();
     for (const row of rows) {
       if (row.separator) {
         const rule = document.createElement('span');
@@ -2804,13 +2806,11 @@
       const value = document.createElement('span');
       if (row.warn) value.className = 'subscription-tooltip-warn';
       value.textContent = row.value;
-      if (row.title) {
-        label.title = row.title;
-        value.title = row.title;
-      }
+      if (row.title) notes.add(row.title);
       line.append(label, value);
       card.append(line);
     }
+    if (notes.size) card.setAttribute('aria-description', [...notes].join(' '));
     return card;
   }
 
@@ -2855,6 +2855,8 @@
     wrap.className = 'limit-plan limit-detail-tooltip-wrap subscription-plan-wrap';
     wrap.classList.toggle('has-opened', tooltipHost.hasOpened());
     wrap.tabIndex = 0;
+    const description = card.getAttribute('aria-description');
+    if (description) wrap.setAttribute('aria-description', description);
     const trigger = document.createElement('span');
     trigger.className = 'subscription-plan-trigger';
     trigger.textContent = plan.textContent;
