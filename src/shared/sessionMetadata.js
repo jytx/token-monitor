@@ -17,6 +17,7 @@ const dshSessionMetadata = require('./providers/dsh/sessionMetadata');
 const workbuddySession = require('./providers/workbuddy/sessionMetadata');
 const devinSessionMetadata = require('./providers/devin/sessionMetadata');
 const grokSessionMetadata = require('./providers/grok/sessionMetadata');
+const zcodeSessionMetadata = require('./providers/zcode/sessionMetadata');
 const { readT3SessionRelationResult } = require('./t3SessionMetadata');
 const { supportsT3SessionClient, nativeAccountingId } = require('./t3SessionIdentity');
 
@@ -258,7 +259,10 @@ const SESSION_METADATA_RESOLVERS = new Map([
   // within the tick. grok writes `summary.json` after tokscale first exposes
   // the id, so it needs the retry.
   ['grok', { resolve: grokSessionMetadata.resolveSessionMetadata, retryAfterTimestampFallback: true }],
-  ['workbuddy', { resolve: workbuddySession.resolveSessionMetadata, retryAfterTimestampFallback: true }]
+  ['workbuddy', { resolve: workbuddySession.resolveSessionMetadata, retryAfterTimestampFallback: true }],
+  // ZCode 的标题在 CLI 自己的 SQLite 库里，tokscale 扫 JSONL 时不读它；
+  // session id 两边同源，重试留给库行晚于 usage 落盘的那个 tick。
+  ['zcode', { resolve: zcodeSessionMetadata.resolveSessionMetadata, retryAfterTimestampFallback: true }]
 ]);
 
 function resolverDefinition(entry) {
