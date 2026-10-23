@@ -65,8 +65,9 @@ test('readTitles answers per id and reports a missing title column', { skip: !sq
 
   const read = readTitles(dbPath, sqlite, ['sess_a', 'sess_b', 'sess_missing']);
   assert.equal(read.supported, true);
-  assert.equal(read.titles.get('sess_a'), '增加 Kyan 生图适配器');
-  assert.equal(read.misses.has('sess_b'), true, 'an empty title is a definitive non-answer');
+  assert.equal(read.rows.get('sess_a')?.title, '增加 Kyan 生图适配器');
+  assert.equal(read.misses.has('sess_b'), false, 'an empty title is still a definitive row');
+  assert.equal(read.rows.get('sess_b')?.title, '');
   assert.equal(read.misses.has('sess_missing'), true, 'a missing row is a definitive non-answer');
 
   const legacyDir = path.join(home, '.zcode', 'cli', 'db');
@@ -76,7 +77,7 @@ test('readTitles answers per id and reports a missing title column', { skip: !sq
   legacyDb.close();
   const legacyRead = readTitles(legacyPath, sqlite, ['sess_a']);
   assert.equal(legacyRead.supported, false);
-  assert.equal(legacyRead.titles.size, 0);
+  assert.equal(legacyRead.rows.size, 0);
 });
 
 test('ZCode titles join by session id and see later updates', { skip: !sqlite }, (t) => {
@@ -93,18 +94,29 @@ test('ZCode titles join by session id and see later updates', { skip: !sqlite },
   db.exec(`CREATE TABLE session (
     id text primary key, project_id text not null, slug text not null,
     directory text not null, title text not null, version text not null,
-    time_created integer not null, time_updated integer not null
+    time_created integer not null, time_updated integer not null,
+    task_type text not null default 'interactive', parent_id text
   )`);
-  const put = db.prepare('INSERT INTO session (id, project_id, slug, directory, title, version, time_created, time_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
-  put.run('sess_1', 'p', 's', '/repo', '帮我分析下这个项目', '1', 1, 2);
-  put.run('sess_dwf-dwfrun-5d819c2c-actor_13_1', 'p', 's', '/repo', 'workflow subagent actor#13@1', '1', 1, 2);
+  const put = db.prepare(`INSERT INTO session
+    (id, project_id, slug, directory, title, version, time_created, time_updated, task_type, parent_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  put.run('sess_1', 'p', 's', '/repo', '帮我分析下这个项目', '1', 1, 2, 'interactive', null);
+  put.run('sess_dwf-dwfrun-5d819c2c-actor_13_1', 'p', 's', '/repo', 'workflow subagent actor#13@1', '1', 1, 2, 'workflow_child', 'sess_1');
+  put.run('sess_sub', 'p', 's', '/repo', 'Explore the project', '1', 1, 2, 'subagent_child', 'sess_1');
+  // 用户主动分叉与侧聊同带 parent_id，但不折进行分组
+  put.run('sess_fork', 'p', 's', '/repo', 'Fork of 帮我分析下这个项目', '1', 1, 2, 'fork', 'sess_1');
+  put.run('sess_side', 'p', 's', '/repo', '侧聊标题', '1', 1, 2, 'selection_side_chat', 'sess_1');
 
   const deps = { sqlite, env: {}, zcodeTitleCache: new Map() };
   const context = { home, deps };
 
-  const first = resolveSessionMetadata(new Set(['sess_1', 'sess_dwf-dwfrun-5d819c2c-actor_13_1', 'sess_gone']), context);
+  const first = resolveSessionMetadata(new Set(['sess_1', 'sess_dwf-dwfrun-5d819c2c-actor_13_1', 'sess_sub', 'sess_fork', 'sess_side', 'sess_gone']), context);
   assert.equal(first.get('sess_1')?.title, '帮我分析下这个项目');
-  assert.equal(first.get('sess_dwf-dwfrun-5d819c2c-actor_13_1')?.title, 'workflow subagent actor#13@1');
+  assert.equal(first.get('sess_1')?.parentSessionId, undefined, 'an interactive session has no parent');
+  assert.equal(first.get('sess_dwf-dwfrun-5d819c2c-actor_13_1')?.parentSessionId, 'sess_1');
+  assert.equal(first.get('sess_sub')?.parentSessionId, 'sess_1');
+  assert.equal(first.get('sess_fork')?.parentSessionId, undefined, 'a fork stays a row of its own');
+  assert.equal(first.get('sess_side')?.parentSessionId, undefined, 'a side chat stays a row of its own');
   assert.equal(first.has('sess_gone'), false, 'an unknown id resolves no metadata');
 
   // A rename lands in WAL; the next tick's fingerprint picks it up
@@ -117,6 +129,8 @@ test('ZCode titles join by session id and see later updates', { skip: !sqlite },
     today: {
       sessions: {
         'zcode:sess_1': { client: 'zcode', sessionId: 'sess_1', title: '' },
+        'zcode:sess_sub': { client: 'zcode', sessionId: 'sess_sub', title: '' },
+        'zcode:sess_fork': { client: 'zcode', sessionId: 'sess_fork', title: '' },
         'zcode:sess_gone': { client: 'zcode', sessionId: 'sess_gone' }
       }
     }
@@ -128,6 +142,8 @@ test('ZCode titles join by session id and see later updates', { skip: !sqlite },
     attemptedSessionKeys: new Set()
   });
   assert.equal(periods.today.sessions['zcode:sess_1'].title, '重命名后的标题');
+  assert.equal(periods.today.sessions['zcode:sess_sub'].parentSessionId, 'sess_1');
+  assert.equal(periods.today.sessions['zcode:sess_fork'].parentSessionId, undefined, 'a fork keeps no parent link');
   assert.equal(periods.today.sessions['zcode:sess_gone'].title, undefined, 'a scan-only row keeps its empty title');
 });
 

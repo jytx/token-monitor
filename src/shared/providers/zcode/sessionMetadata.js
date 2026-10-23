@@ -11,6 +11,9 @@ const { zcodeDataBaseDir } = require('../zai/zcodeDiscovery');
 // usage 时不读这张表，因此扫描输出的 sessions 元数据只有 client/sessionId 与
 // 活跃时间、没有 title，会话行只能退回显示 session id。这里按 tokscale 给出
 // 的 session id 直查该库补齐标题，与 cursor/antigravity 读取本地库标题同构。
+// 同一张表还写着父子关系（session.parent_id），tokscale 同样不输出，于是
+// subagent 与工作流子会话只能平铺；子任务类型一并读出，让它们折进发起它们
+// 的交互会话，与 Codex/Claude 的行列一致。
 //
 // 数据基目录沿用 limits 发现同一条解析链（env ZCODE_DATA_BASE_DIR → HOME →
 // homedir，见 zcodeDataBaseDir）：重定向安装下读到的正是 ZCode 自己写的库，
@@ -28,6 +31,11 @@ function resolveSqlite(deps = {}) {
 }
 
 const TITLE_MAX_CODE_POINTS = 96;
+
+// 工具与工作流派生的子会话：它们的 usage 折叠进发起它们的交互会话行。
+// fork 和 selection_side_chat 同带 parent_id，但是用户主动发起的对话，
+// 标题已自描述，保持独立行。
+const SUBAGENT_TASK_TYPES = new Set(['subagent_child', 'workflow_child']);
 
 // 模块级存活：跨采集 tick 保留，空闲会话不必反复开库
 const titleCache = new Map();
@@ -72,17 +80,31 @@ function readTitles(dbPath, sqlite, wantedIds) {
     const columns = new Set(
       db.prepare('PRAGMA table_info(session)').all().map((column) => String(column.name))
     );
-    if (!columns.has('id') || !columns.has('title')) return { supported: false, titles: new Map(), misses: new Set() };
-    const statement = db.prepare('SELECT title FROM session WHERE id = ?');
-    const titles = new Map();
+    if (!columns.has('id') || !columns.has('title')) return { supported: false, rows: new Map(), misses: new Set() };
+    // task_type 与 parent_id 决定这条会话是否折进父会话：只有工具/工作流
+    // 派生的子会话（subagent_child、workflow_child）折叠，用户主动分叉的
+    // fork 和侧聊 selection_side_chat 保持独立行——它们的标题已自描述，
+    // 折进去会把用户可寻址的会话藏起来。列缺失时按无父子关系处理。
+    const selectParent = columns.has('parent_id') && columns.has('task_type');
+    const statement = db.prepare(
+      selectParent
+        ? 'SELECT title, task_type, parent_id FROM session WHERE id = ?'
+        : 'SELECT title FROM session WHERE id = ?'
+    );
+    const rows = new Map();
     const misses = new Set();
     for (const id of wantedIds) {
       const row = statement.get(id);
-      const title = cleanTitle(row?.title);
-      if (title) titles.set(id, title);
-      else misses.add(id);
+      if (row === undefined) { misses.add(id); continue; }
+      const parentSessionId = selectParent && SUBAGENT_TASK_TYPES.has(String(row.task_type || ''))
+        ? String(row.parent_id || '').trim()
+        : '';
+      rows.set(id, {
+        title: cleanTitle(row.title),
+        parentSessionId: parentSessionId && parentSessionId !== id ? parentSessionId : ''
+      });
     }
-    return { supported: true, titles, misses };
+    return { supported: true, rows, misses };
   } catch (_) {
     return null;
   } finally {
@@ -102,23 +124,29 @@ function resolveSessionMetadata(sessionIds, context = {}) {
   // 指纹变化即全量重查：标题是可变事实（用户可重命名），保留旧值会让
   // 改名永不生效，代价只是每 tick 对可见 id 各一次主键查询
   if (cached?.stamp !== stamp) {
-    cached = { stamp, titles: new Map(), misses: new Set(), supported: null };
+    cached = { stamp, rows: new Map(), misses: new Set(), supported: null };
   }
   if (cached.supported !== false) {
-    const wanted = [...sessionIds].filter((id) => !cached.titles.has(id) && !cached.misses.has(id));
+    // 行存在即定论（标题可空、父子关系可选）；只有"库里没有这一行"
+    // 和瞬时读取失败留给下一次查询
+    const wanted = [...sessionIds].filter((id) => !cached.rows.has(id) && !cached.misses.has(id));
     if (wanted.length > 0) {
       const read = readTitles(dbPath, sqlite, wanted);
       if (read) {
         cached.supported = read.supported;
-        for (const [id, title] of read.titles) cached.titles.set(id, title);
+        for (const [id, row] of read.rows) cached.rows.set(id, row);
         for (const id of read.misses) cached.misses.add(id);
       }
     }
   }
   cache.set(dbPath, cached);
   for (const sessionId of sessionIds) {
-    const title = cached.titles.get(sessionId);
-    if (title) result.set(sessionId, { title });
+    const row = cached.rows.get(sessionId);
+    if (!row) continue;
+    const meta = {};
+    if (row.title) meta.title = row.title;
+    if (row.parentSessionId) meta.parentSessionId = row.parentSessionId;
+    if (Object.keys(meta).length > 0) result.set(sessionId, meta);
   }
   return result;
 }
