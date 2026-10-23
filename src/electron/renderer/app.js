@@ -16165,7 +16165,6 @@ function renderManagedAccountList(config) {
       const grip = document.createElement('span');
       grip.className = 'managed-account-grip';
       grip.textContent = '⠿';
-      grip.title = t('settings.managedAccounts.reorder');
       grip.setAttribute('aria-label', t('settings.managedAccounts.reorder'));
       grip.draggable = true;
       grip.addEventListener('dragstart', (event) => {
@@ -16289,7 +16288,7 @@ function renderManagedAccountList(config) {
       editButton.type = 'button';
       editButton.className = 'managed-account-rename';
       editButton.textContent = '✎';
-      editButton.title = t(config.textKeys.edit);
+      editButton.setAttribute('aria-label', t(config.textKeys.edit));
       editButton.addEventListener('click', () => config.beginEdit(account));
     }
 
@@ -16297,14 +16296,14 @@ function renderManagedAccountList(config) {
     remove.type = 'button';
     remove.className = 'managed-account-remove';
     remove.textContent = '✕';
-    remove.title = t(config.textKeys.remove);
+    remove.setAttribute('aria-label', t(config.textKeys.remove));
     let confirmingRemove = false;
     remove.addEventListener('click', async () => {
       if (!confirmingRemove) {
         confirmingRemove = true;
         remove.classList.add('confirming');
         remove.textContent = '✓';
-        remove.title = t(config.textKeys.removeConfirm, { account: accountName });
+        remove.setAttribute('aria-label', t(config.textKeys.removeConfirm, { account: accountName }));
         return;
       }
       const result = await config.api.removeAccount(account.id);
