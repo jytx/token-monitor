@@ -260,8 +260,9 @@ const SESSION_METADATA_RESOLVERS = new Map([
   // the id, so it needs the retry.
   ['grok', { resolve: grokSessionMetadata.resolveSessionMetadata, retryAfterTimestampFallback: true }],
   ['workbuddy', { resolve: workbuddySession.resolveSessionMetadata, retryAfterTimestampFallback: true }],
-  // ZCode 的标题在 CLI 自己的 SQLite 库里，tokscale 扫 JSONL 时不读它；
-  // session id 两边同源，重试留给库行晚于 usage 落盘的那个 tick。
+  // ZCode keeps titles in its own CLI SQLite database, which tokscale's JSONL
+  // scan never reads; the resolver shares the scan's home, and the retry
+  // covers the tick where the database row lands after the usage does.
   ['zcode', { resolve: zcodeSessionMetadata.resolveSessionMetadata, retryAfterTimestampFallback: true }]
 ]);
 
