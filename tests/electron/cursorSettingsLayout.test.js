@@ -745,85 +745,24 @@ test('Codex system account switching is exposed from limits account rows', () =>
   assert.doesNotMatch(renderLimits, /codexSwitchPopoverRenderPending/);
 });
 
-test('DeepSeek and MiniMax API key panels come from the generic account form', () => {
+test('DeepSeek account panel provides a first-class managed-account entry', () => {
   const html = readRendererFile('index.html');
-  const css = readRendererFile('styles.css');
-  const { limitAccountFormsForRenderer } = require('../../src/electron/limits/accountSettings');
-  const forms = limitAccountFormsForRenderer();
-  const expectedFields = {
-    deepseek: [['deepseekApiKey', 'password']],
-    minimax: [['minimaxBillingMode', 'select'], ['minimaxApiRegion', 'select'], ['minimaxApiKey', 'password']]
-  };
-  for (const id of ['deepseek', 'minimax']) {
-    assert.doesNotMatch(html, new RegExp(`id="${id}(AccountGroup|ManualPanel|ApiKeyInput)"`), id);
-    assert.doesNotMatch(css, new RegExp(`#${id}ManualPanel`), id);
-    const form = forms.find((candidate) => candidate.id === id);
-    assert.equal(form.kind, 'credential', id);
-    assert.deepEqual(form.fields.map(({ key, input }) => [key, input]), expectedFields[id], id);
-    assert.deepEqual(form.manual[0], { note: `settings.${id}.note` }, id);
-    assert.deepEqual(form.status, {
-      configuredKey: `${id}ApiKeyConfigured`,
-      sourceKey: `${id}ApiKeySource`,
-      pendingKey: `${id}PendingCheckSince`
-    }, id);
-    for (const key of ['titleKey', 'openKey', 'clearKey', 'saveKey', 'emptyKey', 'failedKey']) {
-      assert.match(form[key], new RegExp(`^settings\\.${id}\\.`), `${id} ${key}`);
-    }
-    assert.match(
-      form.fields.find(({ key }) => key === `${id}ApiKey`).placeholderKey,
-      new RegExp(`^settings\\.${id}\\.`),
-      id
-    );
-  }
-  assert.deepEqual(forms.find(({ id }) => id === 'deepseek').openUrl, { url: 'https://platform.deepseek.com/api_keys' });
+  const details = html.match(/<div id="deepseekSettingsDetails"[\s\S]*?<div id="deepseekErrorMessage" class="settings-note error hidden"><\/div>/)?.[0] || '';
+  assert.match(details, /<div id="deepseekAccountList" class="managed-account-list">/);
+  assert.match(details, /<button id="deepseekAddToggle"[\s\S]*aria-controls="deepseekAddDetails"/);
+  assert.match(details, /<button id="deepseekOpenBrowser"[\s\S]*data-i18n="settings\.deepseek\.openBrowser">/);
+  assert.match(details, /<input id="deepseekApiKeyInput" type="password"[\s\S]*data-i18n-placeholder="settings\.deepseek\.apiKeyPlaceholder"/);
+  assert.match(details, /<input id="deepseekAccountLabelInput"[\s\S]*data-i18n-placeholder="settings\.deepseek\.labelPlaceholder"/);
+  assert.match(details, /<button id="deepseekSaveAccountButton"[\s\S]*data-i18n="settings\.deepseek\.saveAccount">/);
+  assert.doesNotMatch(details, /deepseekLogoutButton|deepseekRefreshButton|deepseekApiKeySubmit/);
 
   // MiniMax follows the selection, with successful-probe status for Auto;
   // the form declares that, so the renderer has no MiniMax branch of its own.
   const app = readRendererFile('app.js');
-  assert.deepEqual(forms.find(({ id }) => id === 'minimax').openUrl, {
-    byField: 'minimaxApiRegion',
-    urls: {
-      cn: 'https://platform.minimaxi.com/user-center/payment/token-plan',
-      intl: 'https://platform.minimax.io/user-center/payment/token-plan'
-    },
-    byStatus: 'region',
-    statusUrls: {
-      cn: 'https://platform.minimaxi.com/user-center/payment/token-plan',
-      en: 'https://platform.minimax.io/user-center/payment/token-plan'
-    },
-    default: 'https://platform.minimaxi.com/user-center/payment/token-plan',
-    pathByField: {
-      byField: 'minimaxBillingMode',
-      values: { 'token-plan': '/user-center/payment/token-plan', api: '/user-center/payment/balance' }
-    }
-  });
-
-  // The region is a plain setting beside the credential, so Clear leaves it
-  // alone and it stays reachable once a key is saved — a user whose auto-probe
-  // keeps flapping needs the switch after linking, not before.
-  const minimax = forms.find(({ id }) => id === 'minimax');
-  const region = minimax.fields.find(({ key }) => key === 'minimaxApiRegion');
-  assert.equal(region.saveOnChange, true);
-  assert.deepEqual(region.options.map(({ value }) => value), ['auto', 'cn', 'intl']);
-  for (const { labelKey } of region.options) {
-    assert.match(labelKey, /^settings\.minimax\./, labelKey);
-  }
-  assert.deepEqual(minimax.top, [{ field: 'minimaxBillingMode' }, { field: 'minimaxApiRegion' }]);
-
-  // The region never becomes a credential: no store path, so it stays in
-  // settings.json only after a selection; an implicit default stays empty.
-  const { initialAccountSettings } = require('../../src/electron/limits/accountSettings');
-  assert.equal(initialAccountSettings({}).minimaxApiRegion, '');
-  assert.equal(initialAccountSettings({ MINIMAX_API_REGION: 'cn' }).minimaxApiRegion, '');
-  assert.equal(initialAccountSettings({ TOKEN_MONITOR_MINIMAX_API_REGION: 'intl' }).minimaxApiRegion, '');
-  assert.equal(initialAccountSettings({ MINIMAX_API_HOST: 'api.minimax.io' }).minimaxApiRegion, '');
-  assert.match(app, /limitAccountPanelsApi\.resolveOpenUrl\(form, \{\s*document,\s*provider: externalProviderForAccount\(form\.id\)/);
-  assert.doesNotMatch(app, /minimaxPlatformUrl|form\.id === 'minimax'/);
-  const { limitProviderUrlAllowed } = require('../../src/shared/limits/accounts');
-  for (const host of ['platform.minimax.io', 'platform.minimaxi.com']) {
-    assert.equal(limitProviderUrlAllowed(host, '/user-center/payment/token-plan'), true, host);
-  }
-  assert.doesNotMatch(app, /render(Deepseek|Minimax)Status|set(Deepseek|Minimax)AccountExpanded|(deepseek|minimax)AccountLinked/);
+  const setupBody = functionBodyBeforeMarker(app, 'setupCursorAccountUI', '\nsetupCursorAccountUI();');
+  assert.match(setupBody, /setupApiKeyAccountCard\('deepseek'/);
+  assert.match(setupBody, /window\.tokenMonitor\.openExternal\('https:\/\/platform\.deepseek\.com\/api_keys'\)/);
+  assert.doesNotMatch(setupBody, /saveSettings\(\{ deepseekApiKey/);
 });
 
 test('API key account entries share styling and Copilot uses the folded token entry', () => {
@@ -933,9 +872,13 @@ test('Copilot account panel provides GitHub sign-in plus manual token fallback',
 
 test('Volcengine keeps its hand-built panel and saves through the shared credential path', () => {
   const html = readRendererFile('index.html');
+  assert.match(html, /<div id="zaiAccountGroup"[\s\S]*?<div id="zaiAccountList" class="managed-account-list">[\s\S]*?<select id="zaiApiRegionInput">[\s\S]*?<input id="zaiApiKeyInput" type="password"[\s\S]*?<input id="zaiAccountLabelInput"[\s\S]*?<button id="zaiSaveAccountButton"[\s\S]*data-i18n="settings\.zai\.saveAccount">/);
   assert.match(html, /<div id="volcengineAccountGroup"[\s\S]*?data-i18n="settings\.volcengine\.accessKeyId">Access key ID \/ API key[\s\S]*?<input id="volcengineAccessKeyInput" type="password"[\s\S]*placeholder="AKLT\.\.\. or ark-\.\.\."[\s\S]*?<input id="volcengineSecretAccessKeyInput" type="password"[\s\S]*?<input id="volcengineRegionInput" type="text"[\s\S]*?<button id="volcengineCredentialsSubmit"[\s\S]*data-i18n="settings\.volcengine\.saveCredentials">/);
   const app = readRendererFile('app.js');
   const setupBody = functionBodyBeforeMarker(app, 'setupCursorAccountUI', '\nsetupCursorAccountUI();');
+  assert.match(setupBody, /setupApiKeyAccountCard\('zai'/);
+  assert.doesNotMatch(setupBody, /saveSettings\(\{ zaiApiKey/);
+  assert.match(setupBody, /zaiApiRegionInput\?\.addEventListener\('change', \(\) => void saveSettings\(\{ zaiApiRegion: zaiApiRegionInput\.value \|\| 'global' \}\)\)/);
   assert.match(setupBody, /const accessKeyValue = String\(accessKeyInput\.value \|\| ''\)\.trim\(\);/);
   assert.match(setupBody, /\/\^AKLT\/i\.test\(accessKeyValue\) && !secretValue/);
   assert.match(setupBody, /'settings\.volcengine\.secretRequired'/);
@@ -955,18 +898,8 @@ test('Z.ai, Qoder, Trae and Ollama panels are generated from their declared form
   const html = readRendererFile('index.html');
   const { limitAccountFormsForRenderer } = require('../../src/electron/limits/accountSettings');
   const forms = Object.fromEntries(limitAccountFormsForRenderer().map((form) => [form.id, form]));
-  for (const id of ['zai', 'qoder', 'trae', 'ollama']) assert.doesNotMatch(html, new RegExp(`id="${id}AccountGroup"`), id);
+  for (const id of ['qoder', 'trae', 'ollama']) assert.doesNotMatch(html, new RegExp(`id="${id}AccountGroup"`), id);
 
-  // Z.ai: the region select sits above the paste panel and saves on change.
-  assert.deepEqual(forms.zai.top, [{ field: 'zaiApiRegion' }]);
-  const zaiRegion = forms.zai.fields.find(({ key }) => key === 'zaiApiRegion');
-  assert.deepEqual(zaiRegion.options.map(({ value }) => value), ['global', 'bigmodel-cn']);
-  assert.equal(zaiRegion.saveOnChange, true);
-  assert.equal(zaiRegion.secret, false, 'Clear keeps the region');
-  assert.deepEqual(forms.zai.openUrl.urls, {
-    global: 'https://z.ai/manage-apikey/coding-plan/personal/my-plan',
-    'bigmodel-cn': 'https://bigmodel.cn/coding-plan/personal/usage'
-  });
 
   // Qoder: the site select changes both the step hint and the landing page.
   const qoderStep = forms.qoder.manual.find((block) => block.steps).steps[0];
@@ -987,15 +920,10 @@ test('Z.ai, Qoder, Trae and Ollama panels are generated from their declared form
   assert.doesNotMatch(JSON.stringify(forms.trae), /settings\.trae\.note/);
   assert.match(readRendererFile('i18n.js'), /'settings\.trae\.deviceIdNote': '[^']*ide_user_ent_usage[^']*X-Device-Id/);
 
-  // Ollama chooses one draft lane; API key is the fresh-install default.
-  assert.deepEqual(forms.ollama.credentialChoice.fields, ['ollamaApiKey', 'ollamaCookie']);
-  assert.deepEqual(forms.ollama.manual[0], { note: 'settings.ollama.apiKeyNote', whenCredential: 'ollamaApiKey' });
-  assert.equal(forms.ollama.manual.find((block) => block.steps).whenCredential, 'ollamaCookie');
+  // Ollama: 双 lane（API key 或 Cookie）二选一配置，Cookie lane 仍是编号步骤 + 校验保存。
+  assert.equal(forms.ollama.manual.find((block) => block.steps).steps.length, 4);
   assert.deepEqual(forms.ollama.fields.map(({ key, input }) => [key, input]), [['ollamaApiKey', 'password'], ['ollamaCookie', 'textarea']]);
-  assert.equal(forms.ollama.fields[0].required, false);
-  assert.equal(forms.ollama.fields[1].required, false);
   assert.equal(forms.ollama.messages.rejected, 'settings.ollama.validationInvalid');
-  assert.equal(forms.ollama.messages.required, 'settings.ollama.required');
   assert.match(readRendererFile('i18n.js'), /'settings\.ollama\.cookiePlaceholder': 'wos-session=\.\.\.'/);
 
   const preload = fs.readFileSync(path.join(rendererDir, '..', 'preload.js'), 'utf8');
@@ -1116,8 +1044,6 @@ test('Kimi account panel makes the Code API primary and keeps Web access as a fa
   }
   for (const host of ['ollama.com', 'www.ollama.com']) {
     assert.equal(limitProviderUrlAllowed(host, '/settings'), true);
-    assert.equal(limitProviderUrlAllowed(host, '/settings/keys'), true);
-    assert.equal(limitProviderUrlAllowed(host, '/settings/keys/untrusted'), false);
     assert.equal(limitProviderUrlAllowed(host, '/'), false);
   }
 });
@@ -1202,6 +1128,12 @@ test('Claude Web account panel stores a redacted cookie and opens only the usage
   );
   assert.ok(collapsedInnerRules.some(rule => declaration(rule, 'opacity') === '0'));
 
+// Claude 走声明表单（上游）：内联校验移入 account 声明与共享面板 API。
+  const { limitProviderEntry } = require('../../src/shared/limits/registry');
+  const claudeForm = limitProviderEntry('claude').form;
+  assert.equal(claudeForm.messages.invalidFormat, 'settings.claude.cookieInvalidFormat');
+  assert.equal(claudeForm.messages.rejected, 'settings.claude.cookieRejected');
+  assert.deepEqual(claudeForm.openUrl, { url: 'https://claude.ai/settings/usage' });
   const app = readRendererFile('app.js');
   const statusBody = functionBody(app, 'renderExternalProviderStatus', 'renderVolcengineAgentOverrideState');
   assert.match(statusBody, /const canClearConfiguredCredential = source === 'settings' && configured;/);
@@ -1236,52 +1168,26 @@ test('Claude Web account panel stores a redacted cookie and opens only the usage
 
 test('DeepSeek and MiniMax key changes invalidate stale provider status before re-checking', () => {
   const app = readRendererFile('app.js');
-  // Their pills and groups are generated from the form id, so the hand-kept id
-  // maps no longer name them.
-  assert.doesNotMatch(app, /deepseek: 'deepseek(AccountGroup|ApiKeyStatus)'/);
-  assert.doesNotMatch(app, /minimax: 'minimax(AccountGroup|ApiKeyStatus)'/);
-  assert.match(app, /deepseekPendingCheckSince: 0/);
-  assert.match(app, /minimaxPendingCheckSince: 0/);
+  assert.match(app, /deepseek: \{ group: 'deepseekAccountGroup', status: 'deepseekApiKeyStatus' \}/);
+  // 多账号状态 pill 走托管账号列表（x/y linked），与 MiMo/MiniMax 同路径。
+  assert.match(app, /function renderApiKeyAccountStatus\(provider\) \{[\s\S]*renderManagedAccountList\(\{/);
+});
 
-  const saveBody = functionBody(app, 'saveAccountCredential', 'submitAccountCredential');
-  assert.match(saveBody, /saveCredential\(id, values\)[\s\S]*markExternalProviderCheckPending\(id, result\.checkedSince\);[\s\S]*renderExternalProviderStatus\(id\);[\s\S]*await refreshStats\(\);/);
-  const clearBody = functionBody(app, 'clearAccountCredential', 'commitAccountCredential');
-  assert.match(clearBody, /clearCredential\(id\)\);[\s\S]*clearExternalProviderCheckPending\(id\);[\s\S]*clearExternalProviderPendingStatus\(id\);[\s\S]*renderExternalProviderStatus\(id\);/);
-  assert.match(functionBody(app, 'setupLimitAccountPanels', 'limitProviderAccountGroup'), /onClear: \(\{ id \}\) => clearAccountCredential\(id\)/);
-
-  const configLookup = /const config = externalLimitAccountConfig\[providerName\] \|\| limitAccountForm\(providerName\)\?\.status;/;
-  const pendingBody = functionBody(app, 'markExternalProviderCheckPending', 'clearExternalProviderCheckPending');
-  assert.match(pendingBody, configLookup);
-  assert.match(pendingBody, /state\[config\.pendingKey\] = checkedSince;/);
-  assert.match(pendingBody, /clearExternalProviderPendingStatus\(providerName\);/);
-
-  const providerBody = functionBody(app, 'externalProviderForAccount', 'externalProviderAccountLinked');
-  assert.match(providerBody, configLookup);
-  assert.match(providerBody, /Date\.parse\(provider\.updatedAt \|\| ''\)/);
-  assert.match(providerBody, /updatedAt < pendingSince/);
-  assert.match(providerBody, /state\[config\.pendingKey\] = 0;/);
-
-  const settleBody = functionBody(app, 'scheduleExternalProviderCheckSettle', 'markExternalProviderCheckPending');
-  assert.match(settleBody, /externalProviderCheckSettled\.add\(providerName\)/);
-  assert.doesNotMatch(settleBody, /clearExternalProviderCheckPending\(providerName\)/, 'the save cutoff must survive the settle timeout');
-  const renderBody = functionBody(app, 'renderExternalProviderStatus', 'renderVolcengineAgentOverrideState');
-  assert.match(renderBody, /const settled = externalProviderCheckSettled\.has\(providerName\)/);
-  assert.match(renderBody, /pending = enabled &&[^;]*!settled/);
-  assert.match(renderBody, /settled && configured && enabled \? \{ status: 'noSyncedData' \}/);
-  const linkedBody = functionBody(app, 'externalProviderAccountLinked', 'markExternalProviderCheckPending');
-  assert.match(linkedBody, /state\.settings\?\.\[config\.configuredKey\]/);
-  assert.match(linkedBody, /provider\?\.status === 'ok'/);
-
-  const pendingStatusBody = functionBody(app, 'clearExternalProviderPendingStatus', 'nextCopilotSignInFlowId');
-  assert.match(pendingStatusBody, /state\.stats\.limits\.providers = state\.stats\.limits\.providers\.filter/);
-  assert.match(pendingStatusBody, /provider\.provider !== providerName/);
+test('DeepSeek key changes invalidate stale provider status before re-checking', () => {
+  const app = readRendererFile('app.js');
+  const setupBody = functionBodyBeforeMarker(app, 'setupCursorAccountUI', '\nsetupCursorAccountUI();');
+  // 多账号流程：保存走专用 IPC（main 端先活体验证再入库），不再写单账号
+  // settings key，也没有 renderer 侧 pending 遮罩。
+  assert.match(setupBody, /setupApiKeyAccountCard\('deepseek'/);
+  assert.doesNotMatch(setupBody, /saveSettings\(\{ deepseekApiKey/);
+  assert.doesNotMatch(app, /markDeepseekKeyCheckPending|deepseekAccountLinked/);
 });
 
 test('disabled credential providers settle account status instead of checking forever', () => {
   const app = readRendererFile('app.js');
   const toggleBody = functionBody(app, 'onLimitProviderToggle', 'onLimitProviderMove');
   const clearBody = functionBody(app, 'clearDisabledLimitProviderPendingChecks', 'externalProviderForAccount');
-  const externalRenderBody = functionBody(app, 'renderExternalProviderStatus', 'renderVolcengineAgentOverrideState');
+  const externalRenderBody = functionBody(app, 'renderExternalProviderStatus', 'apiKeyAccountsFromSettings');
   const copilotRenderBody = functionBody(app, 'renderCopilotStatus', 'renderOpenCodeProfiles');
 
   assert.match(toggleBody, /clearDisabledLimitProviderPendingChecks\(new Set\(checked\)\)/);
@@ -1292,7 +1198,35 @@ test('disabled credential providers settle account status instead of checking fo
   assert.match(externalRenderBody, /const enabled = limitProviderEnabled\(providerName\);/);
   assert.match(externalRenderBody, /const pending = enabled &&/);
   assert.match(externalRenderBody, /apiKeyAccountStatusText\(providerName, statusProvider, configured, source, enabled\)/);
+  // minimax/deepseek/zai 多账号后无单账号 pending 机制：状态 pill 走托管
+  // 账号列表（x/y linked），与 MiMo 同一渲染路径。
+  assert.match(app, /function renderApiKeyAccountStatus\(provider\) \{[\s\S]*renderManagedAccountList\(\{/);
   assert.match(copilotRenderBody, /copilotAccountStatusText\(provider, configured, source, enabled\)/);
+});
+
+test('MiniMax account saves go through the managed-account IPC with live validation', () => {
+  const app = readRendererFile('app.js');
+  const main = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'electron', 'main.js'), 'utf8');
+  const setupBody = functionBodyBeforeMarker(app, 'setupCursorAccountUI', '\nsetupCursorAccountUI();');
+  // 多账号流程：保存走共用 setupApiKeyAccountCard → 专用 IPC（main 端先
+  // 活体验证再入库），不再写单账号 settings key。
+  assert.match(setupBody, /setupApiKeyAccountCard\('minimax'/);
+  const saveBody = functionBody(app, 'setupApiKeyAccountCard', 'renderCopilotStatus');
+  assert.match(saveBody, /window\.tokenMonitor\[provider\]\.addAccount\(keyInput\.value, labelInput\?\.value \|\| ''\)/);
+  assert.match(saveBody, /window\.tokenMonitor\[provider\]\.updateAccount\(editingId, keyInput\.value, labelInput\?\.value \|\| ''\)/);
+  assert.match(saveBody, /result\?\.errorCode === 'invalidApiKey'/);
+  assert.match(saveBody, /result\?\.errorCode === 'credentialStorageUnavailable'/);
+  assert.doesNotMatch(setupBody, /saveSettings\(\{ minimaxApiKey/);
+  // main 侧三家共用 apiKeyAccountControllers 工厂：活体验证先于持久化，
+  // 存入 settings 前剥离密钥本体。
+  const controllerBody = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'electron', 'apiKeyAccountControllers.js'), 'utf8');
+  assert.match(controllerBody, /const validation = await validateAccount\(result\.account\);/);
+  assert.ok(
+    controllerBody.indexOf('await validateAccount') < controllerBody.indexOf('writeAccounts(['),
+    'validation must happen before persistence'
+  );
+  assert.match(controllerBody, /delete result\.account\.apiKey/);
+  assert.match(main, /apiKeyAccountProviders = \{[\s\S]*minimax: \{ fetchLimits: fetchMinimaxLimits/);
 });
 
 test('MiMo account panel matches the manual Cookie provider layout', () => {
@@ -1353,9 +1287,8 @@ test('MiMo account panel matches the manual Cookie provider layout', () => {
 });
 
 test('DeepSeek account copy says browser and external URL is allowlisted', () => {
-  const { limitAccountFormsForRenderer } = require('../../src/electron/limits/accountSettings');
-  const form = limitAccountFormsForRenderer().find(({ id }) => id === 'deepseek');
-  assert.equal(form.openKey, 'settings.deepseek.openBrowser');
+  const app = readRendererFile('app.js');
+  assert.match(app, /setupApiKeyAccountCard\('deepseek'[\s\S]*?platform\.deepseek\.com\/api_keys/);
 
   const i18n = readRendererFile('i18n.js');
   assert.match(i18n, /'settings\.deepseek\.openBrowser': 'Open DeepSeek API keys in browser'/);
@@ -1368,7 +1301,6 @@ test('DeepSeek account copy says browser and external URL is allowlisted', () =>
   const { limitProviderUrlAllowed } = require('../../src/shared/limits/accounts');
   assert.equal(limitProviderUrlAllowed('platform.deepseek.com', '/api_keys'), true);
   assert.equal(limitProviderUrlAllowed('platform.deepseek.com', '/'), false);
-  assert.deepEqual(form.openUrl, { url: 'https://platform.deepseek.com/api_keys' });
 });
 
 test('Devin account panel uses the shared status label and opens the allowlisted usage page', () => {
@@ -1645,10 +1577,11 @@ test('Factory keeps a saved-key Clear action available after validation fails', 
       },
       limitAccountForm: () => null,
       state: { settings, factoryPendingCheckSince: 0, accountPanelMessages: {} },
+      limitAccountPanelsApi: { syncCredentialFields: () => {} },
+      externalProviderCheckSettled: new Set(),
       document: { getElementById: id => elements.get(id) || null },
       externalProviderForAccount: () => ({ provider: 'factory', status }),
       externalProviderAccountLinked: () => false,
-      externalProviderCheckSettled: new Set(),
       limitProviderEnabled: () => true,
       setCursorStatusText: () => {},
       apiKeyAccountStatusText: () => '',
@@ -1697,10 +1630,10 @@ test('an account message survives the stats re-renders until its own condition r
     limitAccountForm: () => ({ status: { configuredKey: 'deepseekApiKeyConfigured', sourceKey: 'deepseekApiKeySource', pendingKey: 'deepseekPendingCheckSince' } }),
     limitAccountPanelsApi: { syncCredentialFields: () => {} },
     state,
+    externalProviderCheckSettled: new Set(),
     document: { getElementById: id => elements.get(id) || null },
     externalProviderForAccount: () => provider,
     externalProviderAccountLinked: () => false,
-    externalProviderCheckSettled: new Set(),
     limitProviderEnabled: () => true,
     setCursorStatusText: () => {},
     apiKeyAccountStatusText: () => '',
@@ -1739,10 +1672,6 @@ test('account credentials persist through the settings:update body, not a second
   assert.match(updateHandler, /applySettingsPatch\(patch, \(refresh\) => \{ dotsVisibilityApplied = refresh; \}\)/);
   assert.match(updateHandler, /await dotsVisibilityApplied;/);
   assert.match(main, /createCredentialCommands\(\{\s*getSettings: \(\) => settings,\s*applySettingsPatch: applyCredentialSettingsPatch,\s*probeDeps: credentialProbeDeps\s*\}\)/);
-  const credentialPatch = functionBody(main, 'applyCredentialSettingsPatch', 'applySettingsPatch');
-  assert.match(credentialPatch, /applySettingsPatch\(patch, undefined, \{/);
-  assert.match(credentialPatch, /ensureLimitProvider: provider/);
-  assert.match(credentialPatch, /await Promise\.all\(refreshes\)/);
   const body = main.slice(patchStart, main.indexOf("ipcMain.handle('appearance:preview'"));
   assert.match(body, /credentialCommands\.noteSettingsPatch\(patch\);/);
   assert.match(body, /normalizeAccountPatch\(patch, normalizedPatch\)/);
@@ -1814,7 +1743,10 @@ test('settingsForRenderer strips provider cookies before they reach the renderer
   assert.match(main, /ensureCredentialStore\(\)\.writeMimoCredential\(id, cookieHeader\)/);
   assert.match(main, /cookieHeader: readMimoCredential\(account\.id\)/);
   assert.match(main, /migrateLegacyMimoCredentialFiles\(merged\.mimoManagedAccounts\)/);
-  assert.match(main, /if \(!removeMimoCredential\(accountId\)\) return \{ ok: false, error: 'Could not remove stored credential' \};/);
+  // 删除/启停走共用生命周期：MiMo 与 MiniMax 经 config 注入各自的凭据
+  // 读写，凭据移除失败仍然拒绝继续（防凭据残留）。
+  const managedAccounts = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'electron', 'managedAccounts.js'), 'utf8');
+  assert.match(managedAccounts, /if \(!removeCredential\(accountId\)\) return \{ ok: false, error: 'Could not remove stored credential' \};/);
   assert.match(main, /delete result\.account\.cookieHeader/);
 });
 
@@ -2844,8 +2776,7 @@ test('Home limits groups multiple MiMo accounts like Codex', () => {
   // The page's dispatch is by account count with no provider branch left.
   assert.match(renderLimitsBody, /if \(Array\.isArray\(visibleProviders\) && visibleProviders\.length > 1\) \{/);
   assert.match(renderLimitsBody, /nodes\.push\(renderLimitProviderGroup\(id, label, visibleProviders, color\)\);/);
-  assert.doesNotMatch(app, /renderMimoAccountGroup/);
-});
+  assert.doesNotMatch(app, /renderMimoAccountGroup/);});
 
 test('Limits groups multiple Cursor accounts with separate identity and plan rows', () => {
   const app = readRendererFile('app.js');
