@@ -599,6 +599,12 @@ function providerAggregateKey(provider) {
   ) {
     return `${provider.provider}:${identity}:device:${provider.sourceDeviceId || ''}`;
   }
+  // Muse exposes no stable account id, so every row is a device-local
+  // observation. Scoping by device keeps two different Muse accounts on
+  // synced devices from silently coalescing into one quota row.
+  if (provider.provider === 'muse') {
+    return `${provider.provider}:${identity}:device:${provider.sourceDeviceId || ''}`;
+  }
   // One Alibaba Cloud account can hold a Team and a Personal subscription at the
   // same time, with quotas counted separately. Both rows therefore carry the
   // same console-issued account id, so identity alone would make the two plans
@@ -636,6 +642,9 @@ function providerCollapseKey(provider) {
   // so keep the device scope established by providerAggregateKey()——与集合
   // 成员不同，匿名键即使 notConfigured 也要分行（不检查 isConfiguredProvider）。
   if (provider.provider === 'antigravity') return providerAggregateKey(provider);
+  // Muse rows carry no portable identity (see providerAggregateKey), so the
+  // collapse pass must keep the device scope instead of merging by name.
+  if (provider.provider === 'muse') return providerAggregateKey(provider);
   if (MULTI_ACCOUNT_PROVIDER_IDS.has(provider.provider) && isConfiguredProvider(provider)) {
     return providerAggregateKey(provider);
   }

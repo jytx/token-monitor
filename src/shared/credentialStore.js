@@ -356,6 +356,18 @@ class CredentialStore {
     return valueAt(this.readDocument().credentials, ['providers', providerKey, 'accounts', accountId]) === undefined;
   }
 
+  readClaudeWebCredential(id, document = this.readDocument()) {
+    return this.readManagedAccountCredential('claude', id, 'cookie', document);
+  }
+
+  writeClaudeWebCredential(id, cookie) {
+    return this.writeManagedAccountCredential('claude', id, 'cookie', cookie);
+  }
+
+  removeClaudeWebCredential(id) {
+    return this.removeManagedAccountCredentials('claude', id);
+  }
+
   readMimoCredential(id, document = this.readDocument()) {
     return this.readManagedAccountCredential('mimo', id, 'cookieHeader', document);
   }
