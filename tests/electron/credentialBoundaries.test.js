@@ -51,6 +51,11 @@ test('the main settings IPC projection hides provider secrets while retaining co
     subscriptionsDocumentFor: () => null, pendingOrphanedSubscriptions: () => [],
     codexAccountsForRenderer: () => [], antigravityAccountsForRenderer: () => [],
     workbuddyAccountsForRenderer: () => [], mimoAccountsForRenderer: () => [],
+    apiKeyAccountControllers: {
+      minimax: { accountsForRenderer: () => [] },
+      deepseek: { accountsForRenderer: () => [] },
+      zai: { accountsForRenderer: () => [] }
+    },
     claudeAccountService: () => ({ legacyAccount: () => null, loginStatuses: () => [] }),
     effectiveRates: {}, rateCache: null, currentWindowToggleShortcutStatus: () => ({})
   });
