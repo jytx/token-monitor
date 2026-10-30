@@ -625,43 +625,30 @@ function isConfiguredProvider(provider) {
     && !isWorkbuddyPlaceholder(provider));
 }
 
+// 聚合时按 provider:accountKey 保留多行的供应商：多账号供应商（minimax/
+// deepseek/zai 走 apiKeyAccounts 通用层）每账号一条；cursor/volcengine/
+// alibaba 并非用户维护的多账号，但会出现多个 accountKey——cursor 的 OAuth
+// 账号键天然多行，volcengine 的键来自 AK/SK 与区域（两键是 Coding/Agent
+// 套餐拆分），alibaba 的键是控制台账号 UID（跨平台一致，两键即两账号）
+// ——同样必须分行。cline 的键标识各通道内的 API key 或登录账号 id，来自
+// 同步设备的不同凭据身份须分开保留，显示邮箱相同并不代表同一身份。
+// notion 的配额按用户+工作区生效，其复合键可跨端移植，既不能按 provider
+// 折叠也不能按邮箱折叠。其余供应商折叠为单行（同名择优）。
+const MULTI_ACCOUNT_PROVIDER_IDS = new Set(['claude', 'codex', 'opencode', 'openrouter', 'thirdparty', 'mimo', 'minimax', 'deepseek', 'zai', 'cursor', 'cline', 'volcengine', 'alibaba', 'notion']);
+
 function providerCollapseKey(provider) {
   // Known WorkBuddy identities survive missing credentials and refresh-token
   // rotation. Keep every account separate even while its login is unavailable.
   if (provider.provider === 'workbuddy' && provider.accountKey) return providerAggregateKey(provider);
   // Antigravity account keys are portable only when a normalized Google email
   // proves the identity. Anonymous RPC fallback keys are local observations,
-  // so keep the device scope established by providerAggregateKey().
+  // so keep the device scope established by providerAggregateKey()——与集合
+  // 成员不同，匿名键即使 notConfigured 也要分行（不检查 isConfiguredProvider）。
   if (provider.provider === 'antigravity') return providerAggregateKey(provider);
   // Muse rows carry no portable identity (see providerAggregateKey), so the
   // collapse pass must keep the device scope instead of merging by name.
   if (provider.provider === 'muse') return providerAggregateKey(provider);
-  if (
-    (provider.provider === 'claude'
-      || provider.provider === 'codex'
-      || provider.provider === 'opencode'
-      || provider.provider === 'openrouter'
-      || provider.provider === 'thirdparty'
-      || provider.provider === 'mimo'
-      || provider.provider === 'cursor'
-      // Cline keys identify the API key or sign-in account id within each lane.
-      // Keep distinct credential identities from synced devices separate;
-      // matching display emails do not establish a shared identity.
-      || provider.provider === 'cline'
-      // Notion allowances are per user AND workspace. Its verified composite
-      // key is portable; neither a provider-only nor an email collapse is safe.
-      || provider.provider === 'notion'
-      // Volcengine's accountKey comes from the AK/SK and region, so it is the
-      // same on every platform. Two keys mean the Coding/Agent plan split, not
-      // one account hashed twice.
-      || provider.provider === 'volcengine'
-      // Alibaba's accountKey is the console-issued account UID, so it is also
-      // identical on every platform. Two keys mean two accounts, and collapsing
-      // by provider name alone would let one device's row silently replace the
-      // other's.
-      || provider.provider === 'alibaba')
-    && isConfiguredProvider(provider)
-  ) {
+  if (MULTI_ACCOUNT_PROVIDER_IDS.has(provider.provider) && isConfiguredProvider(provider)) {
     return providerAggregateKey(provider);
   }
   return provider.provider;
