@@ -335,6 +335,7 @@ module.exports = {
   devinBearerToken,
   fetchDevinLimits,
   traeAccessToken: traeLimits.traeAccessToken,
+  traeCookie: traeLimits.traeCookie,
   traeDeviceId: traeLimits.traeDeviceId,
   fetchTraeLimits: traeLimits.fetchTraeLimits,
   fetchWorkbuddyLimits: workbuddyLimits.fetchWorkbuddyLimits,

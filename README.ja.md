@@ -30,7 +30,7 @@
 
 ## Token Monitor とは
 
-Claude Code、Codex、Cursor、GitHub Copilot、Cherry Studio など 47+ 種類の AI コーディングツールのリアルタイムトークン使用量と AI ツール制限を表示するデスクトップアプリです。複数デバイス間のリアルタイム同期、使用履歴トレンド、ツール・デバイス・モデル・セッション・プロジェクト別の内訳表示に対応しています。メインウィンドウ、MacBook のノッチ、メニューバーやシステムトレイ、画面の端、フローティングバブル、ネイティブ macOS ウィジェットなど、目に入るあらゆる場所で確認できます。
+Claude Code、Codex、Cursor、GitHub Copilot、Cherry Studio など 48+ 種類の AI コーディングツールのリアルタイムトークン使用量と AI ツール制限を表示するデスクトップアプリです。複数デバイス間のリアルタイム同期、使用履歴トレンド、ツール・デバイス・モデル・セッション・プロジェクト別の内訳表示に対応しています。メインウィンドウ、MacBook のノッチ、メニューバーやシステムトレイ、画面の端、フローティングバブル、ネイティブ macOS ウィジェットなど、目に入るあらゆる場所で確認できます。
 
 ## 対応ツール
 
@@ -59,7 +59,7 @@ Claude Code、Codex、Cursor、GitHub Copilot、Cherry Studio など 47+ 種類�
     <img src=".github/assets/tools-icon/kilo.png" width="40" alt="Kilo" title="Kilo" />
     <img src=".github/assets/tools-icon/commandcode.png" width="40" alt="Command Code" title="Command Code" />
     <img src=".github/assets/tools-icon/mimo.png" width="40" alt="MiMo" title="MiMo" />
-    <img src=".github/assets/tools-icon/muse.png" width="40" alt="Muse Code" title="Muse Code" />
+    <img src=".github/assets/tools-icon/muse.png" width="40" alt="Muse / Muse Code" title="Muse / Muse Code" />
     <img src=".github/assets/tools-icon/zcode.png" width="40" alt="ZCode" title="ZCode" />
     <img src=".github/assets/tools-icon/kiro.png" width="40" alt="Kiro" title="Kiro" />
     <img src=".github/assets/tools-icon/codebuddy.png" width="40" alt="CodeBuddy" title="CodeBuddy" />
@@ -83,6 +83,7 @@ Claude Code、Codex、Cursor、GitHub Copilot、Cherry Studio など 47+ 種類�
     <img src=".github/assets/tools-icon/alibaba.png" width="40" alt="Alibaba Cloud" title="Alibaba Cloud" />
     <img src=".github/assets/tools-icon/stepfun.png" width="40" alt="StepFun" title="StepFun" />
     <img src=".github/assets/tools-icon/notion.png" width="40" alt="Notion AI" title="Notion AI" />
+    <img src=".github/assets/tools-icon/manus.png" width="40" alt="Manus" title="Manus" />
     <img src=".github/assets/tools-icon/thirdparty.gif" width="40" alt="サードパーティAPI" title="サードパーティAPI" />
 </p>
 
@@ -163,7 +164,7 @@ brew install --cask token-monitor
 
 ### 制限・トレンド・エクスポート
 
-- **AI ツール制限検出** — Claude Code、Codex、Cursor、OpenRouter、サードパーティAPI、GLM、Kimi など 30+ プロバイダーの session/daily/weekly/billing/credits、複数の OpenRouter／サードパーティプロファイル、残高型アカウント（Claude クレジット、DeepSeek のプリペイド残高と使用履歴、サードパーティ残高）
+- **AI ツール制限検出** — Claude Code、Codex、Cursor、OpenRouter、サードパーティAPI、GLM、Kimi など 31+ プロバイダーの session/daily/weekly/billing/credits、複数の OpenRouter／サードパーティプロファイル、残高型アカウント（Claude クレジット、DeepSeek のプリペイド残高と使用履歴、サードパーティ残高）
 - **複数アカウントと Codex 切り替え** — 1 つのプロバイダーで複数アカウントを追跡し、それぞれの制限を表示。追跡済みの Codex アカウントは、再認証なしでローカルアカウントとしてワンクリック切り替え可能
 - **Codex リセット予測** — 任意で有効にできるサードパーティのリセット予測。予測されるリセット時刻、リセットタイプ（Regular / Banked）、前回のリセット時刻を表示
 - **削除されたセッション使用量を保持** — 多くのツールは古いセッションを削除します（Claude Code はデフォルトで 30 日後にトランスクリプトを削除）。有効にすると、Token Monitor は観測済みの日別ツール/モデル使用量をローカルにアーカイブし、元ファイルが消えてもヒートマップとトレンドを維持します（下記 [セッションデータの保持期間](#セッションデータの保持期間) を参照）
@@ -230,7 +231,7 @@ Token Monitor は **トークン使用量**、**アカウント制限**、**セ�
 | <img src=".github/assets/tools-icon/kilo.png" width="28" alt="Kilo" /> | Kilo | `~/.local/share/kilo/kilo.db`、VS Code globalStorage tasks (`.../kilocode.kilo-code/tasks/`) | ✅ | — | — |
 | <img src=".github/assets/tools-icon/commandcode.png" width="28" alt="Command Code" /> | Command Code | `~/.commandcode/projects/**/*.jsonl` | ✅ | ✅ | — |
 | <img src=".github/assets/tools-icon/mimo.png" width="28" alt="MiMo" /> | MiMo Code / MiMo Desktop | `~/.local/share/mimocode/mimocode.db` | ✅ | ✅ | — |
-| <img src=".github/assets/tools-icon/muse.png" width="28" alt="Muse Code" /> | Muse Code | `~/.local/share/muse/sessions/` | ✅ | ✅ | — |
+| <img src=".github/assets/tools-icon/muse.png" width="28" alt="Muse Code" /> | Muse / Muse Code | `~/.local/share/muse/sessions/`; muse.ai Cookie | ✅ | ✅ | — |
 | <img src=".github/assets/tools-icon/zcode.png" width="28" alt="ZCode" /> | ZCode / GLM | `~/.zcode/`（`projects/`、`cli/db/db.sqlite`） | ✅ | ✅ | — |
 | <img src=".github/assets/tools-icon/kiro.png" width="28" alt="Kiro" /> | Kiro | `~/.kiro/sessions/cli/`, Kiro IDE globalStorage および `kiro-cli` DB | ✅ | ✅ | — |
 | <img src=".github/assets/tools-icon/codebuddy.png" width="28" alt="CodeBuddy" /> | CodeBuddy | `~/.codebuddy/projects/` + IDE / VS Code 拡張ログ | ✅ | — | ✅ |
@@ -254,6 +255,7 @@ Token Monitor は **トークン使用量**、**アカウント制限**、**セ�
 | <img src=".github/assets/tools-icon/alibaba.png" width="28" alt="Alibaba Cloud" /> | Alibaba Cloud | Alibaba Cloud コンソール cookie（Bailian／Model Studio Token Plan のクォータ、Team と Personal） | — | ✅ | — |
 | <img src=".github/assets/tools-icon/stepfun.png" width="28" alt="StepFun" /> | StepFun | StepFun Oasis-Token（Coding Plan／Token Plan のクォータ） | — | ✅ | — |
 | <img src=".github/assets/tools-icon/notion.png" width="28" alt="Notion AI" /> | Notion AI | Business/Enterprise 向けの Notion AI ローリング／月間使用枠；手動 token_v2 Cookie + 明示的なワークスペース ID | — | ✅ | — |
+| <img src=".github/assets/tools-icon/manus.png" width="28" alt="Manus" /> | Manus | Manus クレジット（月間＋毎日／定期リフレッシュ＋残高）；デスクトップセッション（macOS／Windows）または手動 Web セッション（全 OS） | — | ✅ | — |
 | <img src=".github/assets/tools-icon/thirdparty.gif" width="28" alt="サードパーティAPI" /> | サードパーティAPI | New API / Sub2API互換アカウントプリセット（互換性のあるOne APIフォークを含む）、New APIキープリセット、カスタム残高エンドポイント | — | ✅ | — |
 
 <details>
@@ -270,6 +272,7 @@ Token Monitor は **トークン使用量**、**アカウント制限**、**セ�
 - Unsloth Studio は `studio.db` から Studio のチャットとローカル API の推論使用量を追跡します。ローカル推論の API コストはゼロで、識別可能な従量課金プロバイダーには Tokscale の推定価格を使用します。学習トークンは含まれません。[Unsloth のデータソース](docs/providers/unsloth.md)も参照してください。
 - Devin はローカルの `sessions.db` から Devin CLI セッションを、`acp-events` ACP ログから Devin Desktop のエージェントセッションを追跡します。同じセッションが両方にある場合は CLI データベースが優先されます。Desktop の対象範囲は接続する ACP エージェントに依存します。ローカルに `usage_update` イベントを書き出すエージェントのみが集計対象で、Devin Desktop の既定の `devin-cloud` エージェントはサーバー側で計測されるため、既定の Desktop 構成では Desktop のトークンは報告されません。セッションタイトルとプロジェクト帰属は CLI データベースから取得します。詳しくは [Devin のデータソース](docs/providers/devin.md)を参照してください。
 - Notion AI は内部 API を使用します。`token_v2` Cookie の手動貼り付けと Business/Enterprise の明示的なワークスペース ID が必要です。テストデータのみで検証しており、実際のレスポンスサンプルはなく、実際の認証検証は承認待ちです。Cookie の自動取得は行わず、公開 API としての互換性は保証されません。[Notion のデータソース](docs/providers/notion.md)を参照してください。
+- Manus は macOS／Windows のデスクトップセッションを自動取得し、Linux を含む全 OS で手動 Web セッションも利用できます。月間クレジット、リフレッシュ枠、残高は同じ非公開の内部 API を使用し、互換性は保証されません。[Manus のデータソース](docs/providers/manus.md)を参照してください。
 - MiniMax Code は、CLI が書き込むローカルのセッション履歴（`~/.minimax` または `MINIMAX_DATA_DIR` / `MAVIS_DATA_DIR`、`~/.mavis` と `~/.minimax-<profile>` / `~/.mavis-<profile>` も含む）と、`tokscale headless mcode` でキャプチャした実行を読み取ります。両方にある同じターンは 1 回だけ集計されます。
 
 - Command Code の transcript には実際のトークン数やメッセージごとのモデル情報が含まれません。トークン使用量は transcript テキストから推定され、モデルの帰属と推定コストには各リクエストで過去に使用したモデルではなく、現在設定されているモデルが反映される場合があります。
@@ -292,7 +295,7 @@ Qoder CN のトークン使用量は API ではなくアプリのローカルデ
 | プロンプト／応答ごとの使用量とツール呼び出し | Claude Code, Codex, OpenCode, Pi, Oh My Pi, OmO Native, CodeBuddy, WorkBuddy, Reasonix, DeepSeek Harness | 詳細はローカルで読み取り、同期されません。 |
 | コンテキスト使用量／残り容量 | Claude Code, Codex, DeepSeek Harness | Claude Code のコンテキスト上限はモデルから推定します。 |
 | キャッシュ使用量／セッションのキャッシュヒット率 | キャッシュ項目を提供するデータソース。例： Claude Code, Codex, OpenCode, Cursor, Kimi, Pi, Oh My Pi, OmO Native, DeepSeek Harness | キャッシュ使用量のデータがある場合にヒット率を表示します。 |
-| キャッシュ残存時間の推定 | Claude Code, Codex | Claude Code：5 分または 1 時間。Codex：約 30 分（推定）。 |
+| キャッシュ残存時間の推定 | Claude Code | 記録されたキャッシュの種類に基づき、5 分または 1 時間と推定します。 |
 | 出力速度／トークン消費速度 | Claude Code, Codex, OpenCode, Antigravity, Kimi, GitHub Copilot, Pi, Oh My Pi, OmO Native, Kilo CLI, MiMo Code/MiMo Desktop, Muse Code, ZCode CLI, Kiro, DeepSeek Harness, Devin CLI | 出力速度は `tok/s`、総トークン消費速度は `tok/min`。計測時間には待機を含む場合があります。 |
 | 推論の effort 設定 | Claude Code, Codex | セッションに明示的に記録された設定値のみ表示します。 |
 | 推論トークン数 | Codex, OpenCode, Pi, Oh My Pi, OmO Native, CodeBuddy, WorkBuddy, Reasonix, DeepSeek Harness | — |

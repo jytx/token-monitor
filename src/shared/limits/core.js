@@ -599,11 +599,11 @@ function providerAggregateKey(provider) {
   ) {
     return `${provider.provider}:${identity}:device:${provider.sourceDeviceId || ''}`;
   }
-  // Muse exposes no stable account id, so every row is a device-local
-  // observation. Scoping by device keeps two different Muse accounts on
-  // synced devices from silently coalescing into one quota row.
+  // Keep the existing Muse Code device observations. The web product follows
+  // the shared cross-device winner selection used by other anonymous providers.
   if (provider.provider === 'muse') {
-    return `${provider.provider}:${identity}:device:${provider.sourceDeviceId || ''}`;
+    const sourceKey = `${provider.provider}:${identity}:source:${provider.source || ''}`;
+    return provider.source === 'web' ? sourceKey : `${sourceKey}:device:${provider.sourceDeviceId || ''}`;
   }
   // One Alibaba Cloud account can hold a Team and a Personal subscription at the
   // same time, with quotas counted separately. Both rows therefore carry the
@@ -630,8 +630,9 @@ function isConfiguredProvider(provider) {
 // ——同样必须分行。cline 的键标识各通道内的 API key 或登录账号 id，来自
 // 同步设备的不同凭据身份须分开保留，显示邮箱相同并不代表同一身份。
 // notion 的配额按用户+工作区生效，其复合键可跨端移植，既不能按 provider
-// 折叠也不能按邮箱折叠。其余供应商折叠为单行（同名择优）。
-const MULTI_ACCOUNT_PROVIDER_IDS = new Set(['claude', 'codex', 'opencode', 'openrouter', 'thirdparty', 'mimo', 'minimax', 'deepseek', 'zai', 'cursor', 'cline', 'volcengine', 'alibaba', 'notion']);
+// 折叠也不能按邮箱折叠。manus 的键是会话用户 id 的哈希，同一账号在所有
+// 设备上哈希一致，可跨端分行。其余供应商折叠为单行（同名择优）。
+const MULTI_ACCOUNT_PROVIDER_IDS = new Set(['claude', 'codex', 'opencode', 'openrouter', 'thirdparty', 'mimo', 'minimax', 'deepseek', 'zai', 'cursor', 'cline', 'volcengine', 'alibaba', 'notion', 'manus']);
 
 function providerCollapseKey(provider) {
   // Known WorkBuddy identities survive missing credentials and refresh-token
@@ -642,9 +643,11 @@ function providerCollapseKey(provider) {
   // so keep the device scope established by providerAggregateKey()——与集合
   // 成员不同，匿名键即使 notConfigured 也要分行（不检查 isConfiguredProvider）。
   if (provider.provider === 'antigravity') return providerAggregateKey(provider);
-  // Muse rows carry no portable identity (see providerAggregateKey), so the
-  // collapse pass must keep the device scope instead of merging by name.
-  if (provider.provider === 'muse') return providerAggregateKey(provider);
+  // Muse 的 Web 订阅无设备本地身份，所有设备共享一行（source:web）；CLI
+  // 观测行不可移植（见 providerAggregateKey），保持设备作用域按设备分行。
+  if (provider.provider === 'muse') {
+    return provider.source === 'web' ? `${provider.provider}:source:web` : providerAggregateKey(provider);
+  }
   if (MULTI_ACCOUNT_PROVIDER_IDS.has(provider.provider) && isConfiguredProvider(provider)) {
     return providerAggregateKey(provider);
   }
@@ -960,6 +963,12 @@ function betterProvider(current, candidate) {
   return timestampMs(candidate.updatedAt) >= timestampMs(current.updatedAt) ? candidate : current;
 }
 
+// Muse's two products refresh independently; a fresh CLI observation cannot
+// retire the Web product's last-good quota, or vice versa.
+function providerFreshnessKey(provider) {
+  return provider.provider === 'muse' ? `muse:${provider.source}` : provider.provider;
+}
+
 function aggregateLimits(devices, staleAfterMs = 0, nowMs = Date.now()) {
   const aggregate = { updatedAt: new Date(nowMs).toISOString(), providers: [] };
   const byKey = new Map();
@@ -977,10 +986,11 @@ function aggregateLimits(devices, staleAfterMs = 0, nowMs = Date.now()) {
         sourceDeviceId: String(device?.deviceId || ''),
         stale: isProviderStale(provider, summary, device, staleAfterMs, nowMs)
       };
-      if (isConfiguredProvider(provider)) providersWithConfiguredAccounts.add(provider.provider);
+      const freshnessKey = providerFreshnessKey(provider);
+      if (isConfiguredProvider(provider)) providersWithConfiguredAccounts.add(freshnessKey);
       if (!candidate.stale) {
-        providersWithFreshObservations.add(provider.provider);
-        if (isConfiguredProvider(provider)) providersWithFreshConfiguredAccounts.add(provider.provider);
+        providersWithFreshObservations.add(freshnessKey);
+        if (isConfiguredProvider(provider)) providersWithFreshConfiguredAccounts.add(freshnessKey);
       }
       const key = providerAggregateKey(candidate);
       if (candidate.provider === 'opencode' && isConfiguredProvider(candidate)) {
@@ -1014,14 +1024,15 @@ function aggregateLimits(devices, staleAfterMs = 0, nowMs = Date.now()) {
     if (hasKnownWorkbuddyAccount && isWorkbuddyPlaceholder(candidate)) continue;
     const knownWorkbuddyAccount = candidate.provider === 'workbuddy' && candidate.accountKey
       && !isWorkbuddyPlaceholder(candidate);
-    const hasFreshObservation = providersWithFreshObservations.has(candidate.provider);
+    const freshnessKey = providerFreshnessKey(candidate);
+    const hasFreshObservation = providersWithFreshObservations.has(freshnessKey);
     // Fresh siblings cannot establish freshness for a different account. The
     // first pass already chooses the best observation of each exact identity.
     if (!knownWorkbuddyAccount && candidate.stale && hasFreshObservation) continue;
     const configuredProviders = hasFreshObservation
       ? providersWithFreshConfiguredAccounts
       : providersWithConfiguredAccounts;
-    if (!knownWorkbuddyAccount && !isConfiguredProvider(candidate) && configuredProviders.has(candidate.provider)) continue;
+    if (!knownWorkbuddyAccount && !isConfiguredProvider(candidate) && configuredProviders.has(freshnessKey)) continue;
     const collapseKey = providerCollapseKey(candidate);
     byProvider.set(collapseKey, pickBetterProvider(byProvider.get(collapseKey), candidate));
   }

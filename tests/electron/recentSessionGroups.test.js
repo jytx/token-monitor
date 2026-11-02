@@ -212,17 +212,16 @@ test('Home and Dock retain the latest main gauge and cache snapshot without aggr
       assert.equal(meta.children.some(node => node.className.endsWith('-session-cache')), false);
     }
   }
-  // Child writes do not extend the main's context freshness. The same slot
-  // returns to the main's still-warm cache countdown as it did before grouping.
+  // Child writes do not extend the main's context freshness or revive a
+  // legacy Codex countdown through the child's supported Claude estimate.
   group.groupRows[0].lastUsedAt = new Date(now - sessionLive.RUNNING_WINDOW_MS - 1).toISOString();
   assert.equal(presentation.sessionActivityState(group), 'running');
-  const cache = sessionLive.sessionPromptCacheForRow(group.groupRows[0]);
+  assert.equal(sessionLive.sessionPromptCacheForRow(group.groupRows[0]), null);
   for (const [surface, row] of Object.entries(renderStatusGroup(group))) {
     const meta = row.children.find(node => node.className === `${surface === 'home' ? 'home' : 'edge-dock'}-session-meta`);
     assert.equal(meta.children.some(node => node.className.endsWith('-session-context')), false);
     const badge = meta.children.find(node => node.className.endsWith('-session-cache'));
-    assert.ok(badge, `${surface} shows the main's warm cache rather than the child's`);
-    assert.equal(badge.textContent, translate('session.cacheEstimate', { minutes: cache.minutes }));
+    assert.equal(badge, undefined, `${surface} hides the legacy Codex cache and does not borrow the child's`);
   }
   assert.equal(JSON.stringify(stats), original);
 });
@@ -436,7 +435,7 @@ test('Dock projects once per update for Sessions and multiple provider cards and
   let projections = 0;
   const module = { exports: {} };
   vm.runInNewContext(fs.readFileSync(filename, 'utf8'), {
-    module,
+    module, Date,
     require(id) {
       const api = load(id);
       if (id !== '../sessionRows') return api;
@@ -505,7 +504,7 @@ const NATIVE_MAIN = '01a128e7-84b0-7443-9d1d-af0368c81583';
 const NATIVE_CHILD = '01a1296b-e500-7b51-82c8-169dec45b59c';
 function continuations() {
   const rows = [
-    session('codex', 'rollout-1', { nativeSessionId: NATIVE_MAIN, turnEnded: true, lastUsedAt: '2026-01-01T00:00:00Z' }),
+    session('codex', 'rollout-1', { nativeSessionId: NATIVE_MAIN, turnEnded: true, lastUsedAt: new Date(Date.now() - 86_400_000).toISOString() }),
     session('codex', 'rollout-2', { nativeSessionId: NATIVE_MAIN, title: 'Current main', liveActivity: { state: 'running', source: 'test', observedAt: new Date().toISOString() } }),
     session('codex', 'child-1', { nativeSessionId: NATIVE_CHILD, parentSessionId: 'rollout-1', turnEnded: true }),
     session('codex', 'child-2', { nativeSessionId: NATIVE_CHILD, parentSessionId: 'rollout-2', turnEnded: true }),
