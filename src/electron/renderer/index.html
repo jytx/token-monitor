@@ -24,7 +24,7 @@
             <button id="monthPeriodTab" class="tab" data-period="month" data-period-slot="month" aria-haspopup="menu" aria-expanded="false">MONTH</button>
             <button class="tab" data-period="allTime" data-period-slot="allTime">TOTAL</button>
           </nav>
-          <div id="monthPeriodMenu" class="view-switcher-menu period-menu hidden" role="menu" aria-labelledby="monthPeriodTab">
+          <div id="monthPeriodMenu" class="view-switcher-menu period-menu hidden" popover="manual" role="menu" aria-labelledby="monthPeriodTab">
             <button class="view-switcher-menu-item" type="button" role="menuitemradio" data-fixed-period="month"><span class="view-switcher-menu-label" data-i18n="periodRange.month">This month</span></button>
             <button class="view-switcher-menu-item" type="button" role="menuitemradio" data-fixed-period="week"><span class="view-switcher-menu-label" data-i18n="periodRange.week">This week</span></button>
             <button class="view-switcher-menu-item" type="button" role="menuitemradio" data-fixed-period="last7"><span class="view-switcher-menu-label" data-i18n="periodRange.last7">Last 7 days</span></button>
@@ -1791,6 +1791,11 @@
       <section id="serviceStatusPanel" class="service-status-panel hidden"></section>
       <section id="limitsPanel" class="limits-panel hidden"></section>
       <section id="trendsPanel" class="trends-panel hidden"></section>
+      <div id="sessionToolFilter" class="session-tool-filter hidden" role="group">
+        <button id="sessionToolPrevious" class="session-tool-scroll" type="button" disabled><span class="session-page-icon" aria-hidden="true"></span></button>
+        <div id="sessionToolFilterItems" class="session-tool-filter-items"></div>
+        <button id="sessionToolNext" class="session-tool-scroll session-tool-scroll-next" type="button" disabled><span class="session-page-icon" aria-hidden="true"></span></button>
+      </div>
       <div id="sessionPagerHost" class="session-pager-host hidden"></div>
       <footer class="footer">
         <div id="viewSwitcher" class="view-switcher"></div>
@@ -1961,6 +1966,7 @@
     <script src="notch/pageSettings.js"></script>
     <script src="displaySettings.js"></script>
     <script src="displaySettingsPreview.js"></script>
+    <script src="contentBlur.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

@@ -372,6 +372,7 @@ state.fixedPeriodHistoryPromise = null;
 state.fixedPeriodHistoryCoordinator = null;
 state.fixedPeriodSnapshot = null;
 state.periodMenuOpen = false;
+state.sessionToolFilter = '';
 state.sessionPage = 0;
 state.sessionPagerSignature = '';
 let directBreakdownOverride = null;
@@ -391,8 +392,9 @@ const pendingSettingsPatches = new Set();
 let viewSwitcherLongPressTimer = null;
 let viewSwitcherLongPressTriggered = false;
 let viewSwitcherHoverCloseTimer = null;
+let viewSwitcherRenderKey = '';
 const els = {
-  shell: document.querySelector('.shell'), status: document.getElementById('status'), liveDot: document.getElementById('liveDot'), tokenRateReveal: document.getElementById('tokenRateReveal'), liveTokenRate: document.getElementById('liveTokenRate'), liveTokenRateValue: document.getElementById('liveTokenRateValue'), totalTokens: document.getElementById('totalTokens'), totalTokensCompact: document.getElementById('totalTokensCompact'), cost: document.getElementById('cost'), homePanel: document.getElementById('homePanel'), breakdown: document.getElementById('breakdown'), sessionPagerHost: document.getElementById('sessionPagerHost'), serviceStatusPanel: document.getElementById('serviceStatusPanel'), limitsPanel: document.getElementById('limitsPanel'), trendsPanel: document.getElementById('trendsPanel'), viewSwitcher: document.getElementById('viewSwitcher'), pinButton: document.getElementById('pinButton'), utilityActions: document.getElementById('utilityActions'), settingsButton: document.getElementById('settingsButton'), settingsPanel: document.getElementById('settingsPanel'), languageInput: document.getElementById('languageInput'), currencyInput: document.getElementById('currencyInput'), currencyRateRow: document.getElementById('currencyRateRow'), currencyRateModeAuto: document.getElementById('currencyRateModeAuto'), currencyRateModeManual: document.getElementById('currencyRateModeManual'), currencyRateManualField: document.getElementById('currencyRateManualField'), currencyRateOverrideInput: document.getElementById('currencyRateOverrideInput'), currencyRateStatus: document.getElementById('currencyRateStatus'), hubUrlInput: document.getElementById('hubUrlInput'), secretInput: document.getElementById('secretInput'), deviceIdInput: document.getElementById('deviceIdInput'), limitProviderCheckboxes: document.getElementById('limitProviderCheckboxes'), limitsRefreshInput: document.getElementById('limitsRefreshInput'), limitsRefreshAdaptiveNote: document.getElementById('limitsRefreshAdaptiveNote'), showLimitSourceInput: document.getElementById('showLimitSourceInput'), maskLimitAccountEmailsInput: document.getElementById('maskLimitAccountEmailsInput'), showLimitUsedInputs: Array.from(document.querySelectorAll('input[name="showLimitUsed"]')), liveDotInput: document.getElementById('liveDotInput'), toolIconsInput: document.getElementById('toolIconsInput'), floatingBubbleInput: document.getElementById('floatingBubbleInput'), floatingBubbleTriggerInputs: Array.from(document.querySelectorAll('input[name="floatingBubbleTrigger"]')), floatingBubbleTriggerRow: document.getElementById('floatingBubbleTriggerRow'), floatingBubbleContentInput: document.getElementById('floatingBubbleContentInput'), floatingBubbleContentRow: document.getElementById('floatingBubbleContentRow'), floatingBubbleComposer: document.getElementById('floatingBubbleComposer'), floatingBubbleContent: document.getElementById('floatingBubbleContent'), discordRpcInput: document.getElementById('discordRpcInput'), windowBehaviorInput: document.getElementById('windowBehaviorInput'), keepAboveTaskbarInput: document.getElementById('keepAboveTaskbarInput'), keepAboveTaskbarRow: document.getElementById('keepAboveTaskbarRow'), showTrayIconInput: document.getElementById('showTrayIconInput'), showTrayProviderBadgeInput: document.getElementById('showTrayProviderBadgeInput'), hideAppIconInput: document.getElementById('hideAppIconInput'), hideAppIconRow: document.getElementById('hideAppIconRow'), hideAppIconOptions: document.getElementById('hideAppIconOptions'), trayModeInput: document.getElementById('trayModeInput'), trayContentInput: document.getElementById('trayContentInput'), trayComposer: document.getElementById('trayComposer'), windowToggleShortcutValue: document.getElementById('windowToggleShortcutValue'), windowToggleShortcutClearButton: document.getElementById('windowToggleShortcutClearButton'), windowToggleShortcutNote: document.getElementById('windowToggleShortcutNote'), glassInput: document.getElementById('glassInput'), blurInput: document.getElementById('blurInput'), zoomInput: document.getElementById('zoomInput'), resetGlassButton: document.getElementById('resetGlassButton'), resetDepthButton: document.getElementById('resetDepthButton'), resetZoomButton: document.getElementById('resetZoomButton'), saveSettingsButton: document.getElementById('saveSettingsButton'), clientDisplayList: document.getElementById('clientDisplayList'), wslScanInput: document.getElementById('wslScanInput'), wslScanRow: document.getElementById('wslScanRow'), wslPanel: document.getElementById('wslPanel'), openConfigButton: document.getElementById('openConfigButton'), exportAutoInput: document.getElementById('exportAutoInput'), exportAutoDetails: document.getElementById('exportAutoDetails'), exportAutoStatus: document.getElementById('exportAutoStatus'), exportDirLabel: document.getElementById('exportDirLabel'), exportPickDirButton: document.getElementById('exportPickDirButton'), exportIntervalInput: document.getElementById('exportIntervalInput'), exportNowButton: document.getElementById('exportNowButton'), refreshButton: document.getElementById('refreshButton'), minButton: document.getElementById('minButton'), closeButton: document.getElementById('closeButton'), floatingBubbleTab: document.getElementById('floatingBubbleTab'),
+  shell: document.querySelector('.shell'), status: document.getElementById('status'), liveDot: document.getElementById('liveDot'), tokenRateReveal: document.getElementById('tokenRateReveal'), liveTokenRate: document.getElementById('liveTokenRate'), liveTokenRateValue: document.getElementById('liveTokenRateValue'), totalTokens: document.getElementById('totalTokens'), totalTokensCompact: document.getElementById('totalTokensCompact'), cost: document.getElementById('cost'), homePanel: document.getElementById('homePanel'), breakdown: document.getElementById('breakdown'), sessionPagerHost: document.getElementById('sessionPagerHost'), sessionToolFilter: document.getElementById('sessionToolFilter'), sessionToolFilterItems: document.getElementById('sessionToolFilterItems'), sessionToolPrevious: document.getElementById('sessionToolPrevious'), sessionToolNext: document.getElementById('sessionToolNext'), serviceStatusPanel: document.getElementById('serviceStatusPanel'), limitsPanel: document.getElementById('limitsPanel'), trendsPanel: document.getElementById('trendsPanel'), viewSwitcher: document.getElementById('viewSwitcher'), pinButton: document.getElementById('pinButton'), utilityActions: document.getElementById('utilityActions'), settingsButton: document.getElementById('settingsButton'), settingsPanel: document.getElementById('settingsPanel'), languageInput: document.getElementById('languageInput'), currencyInput: document.getElementById('currencyInput'), currencyRateRow: document.getElementById('currencyRateRow'), currencyRateModeAuto: document.getElementById('currencyRateModeAuto'), currencyRateModeManual: document.getElementById('currencyRateModeManual'), currencyRateManualField: document.getElementById('currencyRateManualField'), currencyRateOverrideInput: document.getElementById('currencyRateOverrideInput'), currencyRateStatus: document.getElementById('currencyRateStatus'), hubUrlInput: document.getElementById('hubUrlInput'), secretInput: document.getElementById('secretInput'), deviceIdInput: document.getElementById('deviceIdInput'), limitProviderCheckboxes: document.getElementById('limitProviderCheckboxes'), limitsRefreshInput: document.getElementById('limitsRefreshInput'), limitsRefreshAdaptiveNote: document.getElementById('limitsRefreshAdaptiveNote'), showLimitSourceInput: document.getElementById('showLimitSourceInput'), maskLimitAccountEmailsInput: document.getElementById('maskLimitAccountEmailsInput'), showLimitUsedInputs: Array.from(document.querySelectorAll('input[name="showLimitUsed"]')), liveDotInput: document.getElementById('liveDotInput'), toolIconsInput: document.getElementById('toolIconsInput'), floatingBubbleInput: document.getElementById('floatingBubbleInput'), floatingBubbleTriggerInputs: Array.from(document.querySelectorAll('input[name="floatingBubbleTrigger"]')), floatingBubbleTriggerRow: document.getElementById('floatingBubbleTriggerRow'), floatingBubbleContentInput: document.getElementById('floatingBubbleContentInput'), floatingBubbleContentRow: document.getElementById('floatingBubbleContentRow'), floatingBubbleComposer: document.getElementById('floatingBubbleComposer'), floatingBubbleContent: document.getElementById('floatingBubbleContent'), discordRpcInput: document.getElementById('discordRpcInput'), windowBehaviorInput: document.getElementById('windowBehaviorInput'), keepAboveTaskbarInput: document.getElementById('keepAboveTaskbarInput'), keepAboveTaskbarRow: document.getElementById('keepAboveTaskbarRow'), showTrayIconInput: document.getElementById('showTrayIconInput'), showTrayProviderBadgeInput: document.getElementById('showTrayProviderBadgeInput'), hideAppIconInput: document.getElementById('hideAppIconInput'), hideAppIconRow: document.getElementById('hideAppIconRow'), hideAppIconOptions: document.getElementById('hideAppIconOptions'), trayModeInput: document.getElementById('trayModeInput'), trayContentInput: document.getElementById('trayContentInput'), trayComposer: document.getElementById('trayComposer'), windowToggleShortcutValue: document.getElementById('windowToggleShortcutValue'), windowToggleShortcutClearButton: document.getElementById('windowToggleShortcutClearButton'), windowToggleShortcutNote: document.getElementById('windowToggleShortcutNote'), glassInput: document.getElementById('glassInput'), blurInput: document.getElementById('blurInput'), zoomInput: document.getElementById('zoomInput'), resetGlassButton: document.getElementById('resetGlassButton'), resetDepthButton: document.getElementById('resetDepthButton'), resetZoomButton: document.getElementById('resetZoomButton'), saveSettingsButton: document.getElementById('saveSettingsButton'), clientDisplayList: document.getElementById('clientDisplayList'), wslScanInput: document.getElementById('wslScanInput'), wslScanRow: document.getElementById('wslScanRow'), wslPanel: document.getElementById('wslPanel'), openConfigButton: document.getElementById('openConfigButton'), exportAutoInput: document.getElementById('exportAutoInput'), exportAutoDetails: document.getElementById('exportAutoDetails'), exportAutoStatus: document.getElementById('exportAutoStatus'), exportDirLabel: document.getElementById('exportDirLabel'), exportPickDirButton: document.getElementById('exportPickDirButton'), exportIntervalInput: document.getElementById('exportIntervalInput'), exportNowButton: document.getElementById('exportNowButton'), refreshButton: document.getElementById('refreshButton'), minButton: document.getElementById('minButton'), closeButton: document.getElementById('closeButton'), floatingBubbleTab: document.getElementById('floatingBubbleTab'),
   subscriptionList: document.getElementById('subscriptionList'), subscriptionAddForm: document.getElementById('subscriptionAddForm'), subscriptionAddToggle: document.getElementById('subscriptionAddToggle'), subscriptionAddDetails: document.getElementById('subscriptionAddDetails'), subscriptionProviderInput: document.getElementById('subscriptionProviderInput'), subscriptionAccountInput: document.getElementById('subscriptionAccountInput'), subscriptionPlanNameInput: document.getElementById('subscriptionPlanNameInput'), subscriptionAmountInput: document.getElementById('subscriptionAmountInput'), subscriptionCurrencyInput: document.getElementById('subscriptionCurrencyInput'), subscriptionIntervalCountInput: document.getElementById('subscriptionIntervalCountInput'), subscriptionIntervalInput: document.getElementById('subscriptionIntervalInput'), subscriptionStartDateInput: document.getElementById('subscriptionStartDateInput'), subscriptionAutoRenewInput: document.getElementById('subscriptionAutoRenewInput'), subscriptionNextRenewalInput: document.getElementById('subscriptionNextRenewalInput'), subscriptionNote: document.getElementById('subscriptionNote'), subscriptionOrphanNotice: document.getElementById('subscriptionOrphanNotice'), subscriptionOrphanText: document.getElementById('subscriptionOrphanText'), subscriptionOrphanAdopt: document.getElementById('subscriptionOrphanAdopt'), subscriptionOrphanDiscard: document.getElementById('subscriptionOrphanDiscard'), subscriptionSyncError: document.getElementById('subscriptionSyncError'), subscriptionNextRenewalLabel: document.getElementById('subscriptionNextRenewalLabel'), subscriptionNextRenewalNote: document.getElementById('subscriptionNextRenewalNote'), subscriptionSubmit: document.getElementById('subscriptionSubmit'), subscriptionCancelEdit: document.getElementById('subscriptionCancelEdit'), subscriptionTotalRow: document.getElementById('subscriptionTotalRow'), subscriptionErrorMessage: document.getElementById('subscriptionErrorMessage'), subscriptionPlanFields: document.getElementById('subscriptionPlanFields'), subscriptionTopUpFields: document.getElementById('subscriptionTopUpFields'), subscriptionTopUpList: document.getElementById('subscriptionTopUpList'), subscriptionTopUpDateInput: document.getElementById('subscriptionTopUpDateInput'), subscriptionTopUpAmountInput: document.getElementById('subscriptionTopUpAmountInput'), subscriptionTopUpAddButton: document.getElementById('subscriptionTopUpAddButton'), subscriptionAmountRow: document.getElementById('subscriptionAmountRow'), subscriptionTopUpHeadingRow: document.getElementById('subscriptionTopUpHeadingRow'), subscriptionKindInputs: [...document.querySelectorAll('input[name="subscriptionKind"]')]
 };
 Object.assign(els, {
@@ -757,6 +759,8 @@ const codexAccountControl = codexAccountControlApi.createCodexAccountControl({
     console.log(`[codex] post-switch update failed: ${error?.message || error}`);
   }
 });
+
+window.TokenMonitorContentBlur.create({ document, window, root: els.shell });
 
 const diagnosticsPanel = window.TokenMonitorDiagnosticsPanel?.createDiagnosticsPanel({
   api: window.tokenMonitor,
@@ -3033,8 +3037,79 @@ function renderSessionPager(page) {
   pager.querySelector('.session-page-status').textContent = t('sessions.pageRange', page);
 }
 
+function updateSessionToolScrollButtons() {
+  const strip = els.sessionToolFilterItems;
+  const overflow = strip.scrollWidth > strip.clientWidth + 1;
+  els.sessionToolFilter.classList.toggle('has-overflow', overflow);
+  els.sessionToolPrevious.disabled = !overflow || strip.scrollLeft <= 1;
+  els.sessionToolNext.disabled = !overflow || strip.scrollLeft + strip.clientWidth >= strip.scrollWidth - 1;
+}
+
+function scrollSessionTools(direction) {
+  els.sessionToolFilterItems.scrollBy({
+    left: direction * els.sessionToolFilterItems.clientWidth * 0.75,
+    behavior: prefersReducedMotion() ? 'instant' : 'smooth'
+  });
+}
+
+function sessionToolClients(row) {
+  if (row.kind !== 'session' && row.kind !== 'summary') return [];
+  return [row.client, ...(row.groupRows || []).map(member => member.client)].filter(Boolean);
+}
+
+// Filter only the session list; shared projections also feed Home and details.
+function renderSessionToolFilter(rows) {
+  const host = els.sessionToolFilter;
+  const strip = els.sessionToolFilterItems;
+  const clients = [...new Set(rows.flatMap(sessionToolClients))];
+  clients.sort((a, b) => KNOWN_CLIENTS.findIndex(client => client.id === a) - KNOWN_CLIENTS.findIndex(client => client.id === b) || a.localeCompare(b));
+  if (state.sessionToolFilter && (clients.length < 2 || !clients.includes(state.sessionToolFilter))) {
+    state.sessionToolFilter = '';
+    state.sessionPage = 0;
+  }
+  host.classList.toggle('hidden', clients.length < 2);
+  host.setAttribute('aria-label', t('sessions.filterTools'));
+  els.sessionToolPrevious.setAttribute('aria-label', t('sessions.toolsPrevious'));
+  els.sessionToolNext.setAttribute('aria-label', t('sessions.toolsNext'));
+  const signature = JSON.stringify([currentLocale(), clients, state.sessionToolFilter]);
+  if (host.dataset.signature !== signature) {
+    host.dataset.signature = signature;
+    const focused = strip.contains(document.activeElement) ? document.activeElement.dataset.client : null;
+    const buttons = ['', ...clients].map(client => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'session-tool-filter-button';
+      button.dataset.client = client;
+      const label = client ? clientLabels[client] || client : t('sessions.allTools');
+      button.setAttribute('aria-label', label);
+      button.setAttribute('aria-pressed', String(state.sessionToolFilter === client));
+      if (client && clientsWithIcon.has(client)) {
+        const icon = document.createElement('span');
+        icon.className = `row-icon row-icon-${client}`;
+        icon.setAttribute('aria-hidden', 'true');
+        button.append(icon);
+      } else {
+        button.textContent = label;
+      }
+      button.addEventListener('click', () => {
+        state.sessionToolFilter = state.sessionToolFilter === client ? '' : client;
+        state.sessionPage = 0;
+        state.rowSignature = '';
+        els.breakdown.scrollTop = 0;
+        render();
+      });
+      return button;
+    });
+    strip.replaceChildren(...buttons);
+    if (focused !== null) buttons.find(button => button.dataset.client === focused)?.focus({ preventScroll: true });
+  }
+  updateSessionToolScrollButtons();
+  return state.sessionToolFilter ? rows.filter(row => sessionToolClients(row).includes(state.sessionToolFilter)) : rows;
+}
+
 function renderRows(rows, { incompleteHint = '' } = {}) {
   if (sessionTooltipShouldHoldRender()) return;
+  if (state.breakdown === 'session') rows = renderSessionToolFilter(rows);
   if (rows.length === 0 && !incompleteHint) {
     els.breakdown.replaceChildren();
     renderSessionPager(null);
@@ -4501,7 +4576,7 @@ function limitDetailTooltipShouldHoldRender() {
 }
 
 function sessionTooltipShouldHoldRender() {
-  return Boolean(document.querySelector('.home-session-row .is-hover-reading, .home-session-meta .limit-detail-tooltip-wrap:hover, .home-session-meta .limit-detail-tooltip-wrap:focus-within, .row-context.limit-detail-tooltip-wrap:hover, .row-context.limit-detail-tooltip-wrap:focus-within, .row-label .limit-detail-tooltip-wrap:hover, .row-label .limit-detail-tooltip-wrap:focus-within, .session-group-run .is-hover-reading, .session-group-run:focus-within, .session-group-run .limit-detail-tooltip-wrap:hover, .session-group-run .limit-detail-tooltip-wrap:focus-within, .detail-ex-title.is-hover-reading, .detail-heading.is-hover-reading, .detail-ex-title.limit-detail-tooltip-wrap:hover, .detail-ex-title.limit-detail-tooltip-wrap:focus-within'));
+  return Boolean(document.querySelector('.home-panel:not(.hidden) .home-session-row .is-hover-reading, .home-panel:not(.hidden) .home-session-meta .limit-detail-tooltip-wrap:hover, .home-panel:not(.hidden) .home-session-meta .limit-detail-tooltip-wrap:focus-within, .row-context.limit-detail-tooltip-wrap:hover, .row-context.limit-detail-tooltip-wrap:focus-within, .row-label .limit-detail-tooltip-wrap:hover, .row-label .limit-detail-tooltip-wrap:focus-within, .session-group-run .is-hover-reading, .session-group-run:focus-within, .session-group-run .limit-detail-tooltip-wrap:hover, .session-group-run .limit-detail-tooltip-wrap:focus-within, .detail-ex-title.is-hover-reading, .detail-heading.is-hover-reading, .detail-ex-title.limit-detail-tooltip-wrap:hover, .detail-ex-title.limit-detail-tooltip-wrap:focus-within'));
 }
 
 function flushPendingLimitDetailTooltipRender() {
@@ -5255,6 +5330,7 @@ function sessionDetailBack() {
 }
 
 function renderSessionDetail({ detail, loading, error, preserveScroll = false } = {}) {
+  els.sessionToolFilter.classList.add('hidden');
   els.breakdown.classList.add('hidden');
   els.sessionDetail.classList.remove('hidden');
   els.sessionDetailHead.classList.remove('hidden');
@@ -5474,6 +5550,7 @@ function sessionGroupRunNode(row, max, parent) {
 }
 
 function renderSessionGroupDetail(request) {
+  els.sessionToolFilter.classList.add('hidden');
   els.breakdown.classList.add('hidden');
   els.sessionDetail.classList.remove('hidden');
   els.sessionDetailHead.classList.remove('hidden');
@@ -6172,6 +6249,8 @@ function setPeriodMenuOpen(open, { restoreFocus = false, focus = '' } = {}) {
   state.periodMenuOpen = Boolean(open);
   els.monthPeriodMenu?.closest('.titlebar')?.classList.toggle('period-menu-open', state.periodMenuOpen);
   els.monthPeriodMenu?.classList.toggle('hidden', !state.periodMenuOpen);
+  if (state.periodMenuOpen) els.monthPeriodMenu?.showPopover();
+  else els.monthPeriodMenu?.hidePopover();
   els.monthPeriodTab?.setAttribute('aria-expanded', String(state.periodMenuOpen));
   for (const button of periodMenuButtons()) {
     button.tabIndex = state.periodMenuOpen && button.classList.contains('is-current') ? 0 : -1;
@@ -6262,16 +6341,21 @@ function updateViewSwitcherOpenState({ focusMenu = false, focusDisclosure = fals
   const menu = els.viewSwitcher.querySelector('#viewSwitcherMenu');
   const disclosure = els.viewSwitcher.querySelector('.view-switcher-disclosure');
   if (!menu || !disclosure) return false;
+  const wasOpen = menu.matches(':popover-open');
 
   els.viewSwitcher.classList.toggle('is-open', state.viewSwitcherOpen);
   els.viewSwitcher.classList.toggle('has-opened', state.viewSwitcherHasOpened);
   disclosure.setAttribute('aria-expanded', String(state.viewSwitcherOpen));
   menu.classList.toggle('hidden', !state.viewSwitcherOpen);
+  if (state.viewSwitcherOpen !== wasOpen) {
+    if (state.viewSwitcherOpen) menu.showPopover();
+    else menu.hidePopover();
+  }
   menu.setAttribute('aria-hidden', String(!state.viewSwitcherOpen));
   for (const item of menu.querySelectorAll('.view-switcher-menu-item')) {
     item.tabIndex = state.viewSwitcherOpen && item.classList.contains('is-current') ? 0 : -1;
   }
-  if (state.viewSwitcherOpen) requestAnimationFrame(() => menu.querySelector('.is-current')?.scrollIntoView({ block: 'nearest' }));
+  if (state.viewSwitcherOpen && (!wasOpen || focusMenu)) requestAnimationFrame(() => menu.querySelector('.is-current')?.scrollIntoView({ block: 'nearest' }));
   if (focusMenu) requestAnimationFrame(() => menu.querySelector('.is-current')?.focus());
   if (focusDisclosure) requestAnimationFrame(() => disclosure.focus());
   if (visibleStatsSurface() === 'main' && !isSettingsPanelOpen() && !isRendererWindowHidden() && !state.floatingBubble.collapsed) {
@@ -6296,6 +6380,12 @@ function renderViewSwitcher({ focusMenu = false, focusDisclosure = false } = {})
   const currentLabel = viewLabelById(currentId);
   const nextId = nextBreakdown(currentId);
   const nextLabel = viewLabelById(nextId);
+  const renderKey = JSON.stringify([currentId, order.map(id => [id, viewLabelById(id)]),
+    pluginPageOptions().map(page => [page.id, page.icon, page.identityIcon]),
+    t('views.switcher.choose'), t('views.switcher.next', { view: nextLabel })]);
+  // Usage pushes repaint the page without changing navigation. Keep the same
+  // popover/rows so hover, focus, scroll and its entry animation survive them.
+  if (renderKey === viewSwitcherRenderKey && updateViewSwitcherOpenState({ focusMenu, focusDisclosure })) return;
 
   const current = document.createElement('button');
   current.type = 'button';
@@ -6352,6 +6442,7 @@ function renderViewSwitcher({ focusMenu = false, focusDisclosure = false } = {})
 
   const menu = document.createElement('div');
   menu.id = 'viewSwitcherMenu';
+  menu.setAttribute('popover', 'manual');
   menu.className = `view-switcher-menu${state.viewSwitcherOpen ? '' : ' hidden'}`;
   menu.setAttribute('role', 'menu');
   menu.setAttribute('aria-label', t('views.switcher.choose'));
@@ -6401,6 +6492,8 @@ function renderViewSwitcher({ focusMenu = false, focusDisclosure = false } = {})
   els.viewSwitcher.classList.toggle('is-open', state.viewSwitcherOpen);
   els.viewSwitcher.classList.toggle('has-opened', state.viewSwitcherHasOpened);
   els.viewSwitcher.replaceChildren(current, disclosure, menu);
+  viewSwitcherRenderKey = renderKey;
+  if (state.viewSwitcherOpen) menu.showPopover();
   if (state.viewSwitcherOpen) requestAnimationFrame(() => menu.querySelector('.is-current')?.scrollIntoView({ block: 'nearest' }));
   if (focusMenu) requestAnimationFrame(() => menu.querySelector('.is-current')?.focus());
   if (focusDisclosure) requestAnimationFrame(() => disclosure.focus());
@@ -7503,6 +7596,7 @@ function renderAppContent() {
     return;
   }
   ensureBreakdownVisible();
+  if (state.breakdown !== 'session' || state.openSession) els.sessionToolFilter.classList.add('hidden');
   const pluginPage = pluginMainPages?.render(pluginPageOptions(), state.breakdown) || false;
   els.shell.classList.toggle('plugin-page-mode', pluginPage);
   if (pluginPage) {
@@ -7547,6 +7641,7 @@ function renderAppContent() {
   const period = state.stats.periods?.[state.period] || { totalTokens: 0, costUsd: 0, clients: {} };
   const { fixedUnavailable, detailUnavailable } = periodContentAvailability();
   if (fixedUnavailable || detailUnavailable) {
+    els.sessionToolFilter.classList.add('hidden');
     cancelNumberAnimation();
     els.totalTokens.textContent = fixedUnavailable ? '—' : formatNumber(Number(period.totalTokens || 0));
     updateTotalCompact(fixedUnavailable ? 0 : Number(period.totalTokens || 0));
@@ -13886,6 +13981,11 @@ for (const input of els.reduceMotionInputs || []) {
   });
 }
 els.liveDotInput.addEventListener('change', saveAppearanceFromControls);
+els.sessionToolFilterItems.addEventListener('scroll', updateSessionToolScrollButtons, { passive: true });
+els.sessionToolPrevious.addEventListener('click', () => scrollSessionTools(-1));
+els.sessionToolNext.addEventListener('click', () => scrollSessionTools(1));
+new ResizeObserver(updateSessionToolScrollButtons).observe(els.sessionToolFilterItems);
+
 els.toolIconsInput.addEventListener('change', async () => {
   state.settings.showToolIcons = els.toolIconsInput.checked;
   renderHomeIfVisible();
