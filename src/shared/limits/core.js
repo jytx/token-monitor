@@ -631,8 +631,9 @@ function isConfiguredProvider(provider) {
 // 同步设备的不同凭据身份须分开保留，显示邮箱相同并不代表同一身份。
 // notion 的配额按用户+工作区生效，其复合键可跨端移植，既不能按 provider
 // 折叠也不能按邮箱折叠。manus 的键是会话用户 id 的哈希，同一账号在所有
-// 设备上哈希一致，可跨端分行。其余供应商折叠为单行（同名择优）。
-const MULTI_ACCOUNT_PROVIDER_IDS = new Set(['claude', 'codex', 'opencode', 'openrouter', 'thirdparty', 'mimo', 'minimax', 'deepseek', 'zai', 'cursor', 'cline', 'volcengine', 'alibaba', 'notion', 'manus']);
+// 设备上哈希一致，可跨端分行。opendesign 的工作区 ID 可跨设备移植，同
+// 一工作区在所有设备上分行一致。其余供应商折叠为单行（同名择优）。
+const MULTI_ACCOUNT_PROVIDER_IDS = new Set(['claude', 'codex', 'opencode', 'openrouter', 'thirdparty', 'mimo', 'minimax', 'deepseek', 'zai', 'cursor', 'cline', 'volcengine', 'alibaba', 'notion', 'manus', 'opendesign']);
 
 function providerCollapseKey(provider) {
   // Known WorkBuddy identities survive missing credentials and refresh-token
@@ -966,6 +967,7 @@ function betterProvider(current, candidate) {
 // Muse's two products refresh independently; a fresh CLI observation cannot
 // retire the Web product's last-good quota, or vice versa.
 function providerFreshnessKey(provider) {
+  if (provider.provider === 'opendesign' && provider.accountKey) return `opendesign:${provider.accountKey}`;
   return provider.provider === 'muse' ? `muse:${provider.source}` : provider.provider;
 }
 
@@ -1017,8 +1019,12 @@ function aggregateLimits(devices, staleAfterMs = 0, nowMs = Date.now()) {
   // Map.set() would arbitrarily overwrite the fresh one with the stale one.
   const hasKnownWorkbuddyAccount = Array.from(byKey.values()).some((candidate) =>
     candidate.provider === 'workbuddy' && candidate.accountKey && !isWorkbuddyPlaceholder(candidate));
+  const hasKnownOpendesignWorkspace = Array.from(byKey.values()).some((candidate) =>
+    candidate.provider === 'opendesign' && isConfiguredProvider(candidate));
   const byProvider = new Map();
   for (const candidate of byKey.values()) {
+    if (hasKnownOpendesignWorkspace && candidate.provider === 'opendesign'
+      && ['notConfigured', 'disabled'].includes(candidate.status)) continue;
     // A local-app sentinel is an onboarding hint, not an extra account. Real
     // identities keep their own failure hints even when none has credentials.
     if (hasKnownWorkbuddyAccount && isWorkbuddyPlaceholder(candidate)) continue;
