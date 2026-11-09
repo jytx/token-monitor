@@ -166,19 +166,6 @@ contextBridge.exposeInMainWorld('tokenMonitor', {
       return () => ipcRenderer.removeListener('mimo:accounts', handler);
     }
   },
-  minimax: {
-    accounts: () => ipcRenderer.invoke('minimax:accounts'),
-    addAccount: (apiKey, accountLabel) => ipcRenderer.invoke('minimax:addAccount', apiKey, accountLabel),
-    updateAccount: (id, apiKey, accountLabel) => ipcRenderer.invoke('minimax:updateAccount', id, apiKey, accountLabel),
-    reorderAccounts: (orderedIds) => ipcRenderer.invoke('minimax:reorderAccounts', orderedIds),
-    removeAccount: (id) => ipcRenderer.invoke('minimax:removeAccount', id),
-    setAccountEnabled: (id, enabled) => ipcRenderer.invoke('minimax:setAccountEnabled', id, enabled),
-    onAccounts: (callback) => {
-      const handler = (_event, accounts) => callback(accounts);
-      ipcRenderer.on('minimax:accounts', handler);
-      return () => ipcRenderer.removeListener('minimax:accounts', handler);
-    }
-  },
   deepseek: {
     accounts: () => ipcRenderer.invoke('deepseek:accounts'),
     addAccount: (apiKey, accountLabel) => ipcRenderer.invoke('deepseek:addAccount', apiKey, accountLabel),
@@ -271,6 +258,11 @@ contextBridge.exposeInMainWorld('tokenMonitor', {
     setProfileEnabled: (name, enabled) => ipcRenderer.invoke('opencode:setProfileEnabled', name, enabled),
     setAmbientEnabled: (enabled) => ipcRenderer.invoke('opencode:setAmbientEnabled', enabled)
   },
+  minimax: {
+    getKeys: () => ipcRenderer.invoke('minimax:getKeys'),
+    addKey: (key) => ipcRenderer.invoke('minimax:addKey', key),
+    removeKey: (id) => ipcRenderer.invoke('minimax:removeKey', id)
+  },
   openrouter: {
     getProfiles: () => ipcRenderer.invoke('openrouter:getProfiles'),
     saveProfile: (name, apiKey) => ipcRenderer.invoke('openrouter:saveProfile', name, apiKey),
@@ -317,6 +309,9 @@ contextBridge.exposeInMainWorld('tokenMonitor', {
   // Plugin management and the views this window draws (Home, tray bitmap).
   // Trust and installation run in main; enabled author UI executes in this page.
   plugins: {
+    limitsDemand: value => ipcRenderer.invoke('plugins:limitsDemand', value),
+    forgetCredentials: id => ipcRenderer.invoke('plugins:forgetCredentials', id),
+
     getSettings: id => pluginSettingsResult(ipcRenderer.invoke('plugins:getSettings', id)),
     updateSettings: (id, input) => pluginSettingsResult(ipcRenderer.invoke('plugins:updateSettings', id, input)),
     list: () => ipcRenderer.invoke('plugins:list'),

@@ -195,6 +195,7 @@ const {
   rendererOmittedAccountKeys
 } = require('./limits/accountSettings');
 const { createCredentialCommands } = require('./limits/credentialCommands');
+const { createMinimaxApiKeys } = require('./providers/minimax/apiKeys');
 const { createClaudeManagedAccounts, claudeAccountChangeScope } = require('./providers/claude/managedAccounts');
 const { copilotLoginErrorMessage, isAllowedVerificationUrl, runCopilotDeviceFlowLogin } = require('../shared/providers/copilot/deviceFlow');
 const {
@@ -333,9 +334,16 @@ const {
   withDetectedMimoAccount
 } = require('../shared/providers/mimo/limits');
 const { createApiKeyAccountController } = require('./apiKeyAccountControllers');
+const { cleanApiKeySecret } = require('../shared/apiKeyAccounts');
+const { normalizeNamedProfileName } = require('../shared/namedProfile');
 const { fetchDeepSeekLimits } = require('../shared/providers/deepseek/limits');
 const { fetchZaiLimits } = require('../shared/providers/zai/limits');
-const { fetchMinimaxLimits } = require('../shared/providers/minimax/limits');
+const {
+  fetchMinimaxLimits,
+  minimaxApiProfiles,
+  normalizeMinimaxBillingMode,
+  normalizeMinimaxRegionSetting
+} = require('../shared/providers/minimax/limits');
 const { normalizeManagedAccountMeta } = require('./managedAccounts');
 const { createMimoAccountMetadataReader } = require('./providers/mimo/accountMetadata');
 const { deviceHistoryRevision, historyPreview, historyRevision } = require('../shared/history');
@@ -414,6 +422,7 @@ const { createSyncUploadScheduler, normalizeSyncUploadIntervalMs } = require('./
 const { createLatestWinsReconciler } = require('./latestWinsReconciler');
 const { createIcloudSyncStore } = require('./icloudSync');
 const { createIcloudSyncRuntime } = require('./icloudSyncRuntime');
+const { isCursorDetectedAccountCurrent } = require('../shared/providers/cursor/account');
 const {
   classifySettingsChange,
   diagnosticConfigurationFromSettings,
@@ -485,7 +494,8 @@ const {
   normalizeEdgeDockMode,
   normalizeEdgeDockOffset,
   normalizeEdgeDockSide,
-  normalizeEdgeDockSize
+  normalizeEdgeDockSize,
+  normalizeEdgeDockBubbleSize
 } = require('./edgeDock/geometry');
 const { buildEdgeDockCells } = require('./renderer/edgeDock/presentation');
 const edgeDockPresentationApi = require('./renderer/edgeDock/presentation');
@@ -556,7 +566,7 @@ function appWindowIcon() {
 const DEFAULT_WINDOW = { width: 340, height: 650 };
 const WINDOW_LIMITS = { minWidth: 240, minHeight: 140, maxWidth: 1200, maxHeight: 1400 };
 const ZOOM_LIMITS = { min: 0.7, max: 1.6, step: 0.1 };
-const TRAY_CONTENT_VALUES = new Set(['tokens', 'cost', 'both', 'tokensAll', 'costAll', 'bothAll', 'limitsAllSessions', 'liveTokenRate', 'bars', 'barsSession', 'barsWeekly', 'barsAllSessions', 'icon', 'custom']);
+const TRAY_CONTENT_VALUES = new Set(['tokens', 'cost', 'both', 'tokensMonth', 'costMonth', 'bothMonth', 'tokensAll', 'costAll', 'bothAll', 'limitsAllSessions', 'liveTokenRate', 'bars', 'barsSession', 'barsWeekly', 'barsAllSessions', 'icon', 'custom']);
 const HUB_MODE_VALUES = new Set(['local', 'client', 'host', 'icloud']);
 const LANGUAGE_VALUES = new Set(LANGUAGE_OPTIONS.map((option) => option.value));
 const COLLECTION_MODE_VALUES = new Set(['live', 'smart', 'interval']);
@@ -711,6 +721,8 @@ function defaultSettings() {
     edgeDockMacBackdrop: 'inherit',
     edgeDockWindowsBackdrop: 'inherit',
     edgeDockSize: 'medium',
+    edgeDockBubbleSize: 'inherit',
+    edgeDockBubbleCustomScale: 1,
     edgeDockCustomScale: 1,
     edgeDockSide: 'right',
     edgeDockFloatingX: null,
@@ -948,7 +960,6 @@ function electronLimitsConfig() {
     defaultLimitProviders: defaultLimitProviders(),
     codexManagedAccounts: codexManagedAccountsForCollector(),
     mimoManagedAccounts: mimoManagedAccountsForCollector(),
-    minimaxManagedAccounts: apiKeyAccountControllers.minimax.managedAccountsForCollector(),
     deepseekManagedAccounts: apiKeyAccountControllers.deepseek.managedAccountsForCollector(),
     zaiManagedAccounts: apiKeyAccountControllers.zai.managedAccountsForCollector(),
     antigravityManagedAccounts: antigravityManagedAccountsForCollector()
@@ -1662,7 +1673,7 @@ function validateApiKeyAccountVia(fetchLimits, accountsOptionKey) {
 }
 
 const apiKeyAccountProviders = {
-  minimax: { fetchLimits: fetchMinimaxLimits, accountsOptionKey: 'minimaxManagedAccounts' },
+  // minimax 已退役托管层，改用上游 profiles + OAuth（PR #1284），见 migrateMinimaxManagedAccounts。
   deepseek: { fetchLimits: fetchDeepSeekLimits, accountsOptionKey: 'deepseekManagedAccounts' },
   zai: { fetchLimits: fetchZaiLimits, accountsOptionKey: 'zaiManagedAccounts' }
 };
@@ -2177,11 +2188,11 @@ function migrateLimitProviders(value) {
   // Saved provider selections are user intent. Normalize ids, but do not expand
   // older defaults into today's full provider list because the saved shape is
   // indistinguishable from a deliberate "only these providers" choice.
-  return parseLimitProviders(value).join(',');
+  return require('./plugins/limits').desktopProviderPreference(value, parseLimitProviders);
 }
 
 function migrateLimitProviderOrder(value) {
-  return parseLimitProviders(value).join(',') || defaultLimitProviderOrder();
+  return require('./plugins/limits').desktopProviderPreference(value, parseLimitProviders) || defaultLimitProviderOrder();
 }
 
 function migrateHomeLimitProviderOrder(value) {
@@ -2651,10 +2662,48 @@ function reportCredentialStorageError(context, error) {
   } catch (_) {}
 }
 
+// dev 托管多账号（minimax）退役迁移：把 settings.minimaxManagedAccounts 的账号
+// 一次性搬进上游 profiles 结构（PR #1284）。两侧 accountKey 公式一致
+// （hashKey('minimax', apiKey)），搬迁后账号身份、limitsRuntime 的调度与
+// 订阅绑定保持连续。名字沿用托管账号的 label，不合法或撞名时回退 account-N；
+// 计费模式与区域沿用迁移前的全局设置（dev 托管层不区分账号级设置）。
+function migrateMinimaxManagedAccounts(store, saved) {
+  const accounts = Array.isArray(saved?.minimaxManagedAccounts) ? saved.minimaxManagedAccounts : [];
+  if (!accounts.length) return;
+  const reserved = new Set(['environment', 'default']);
+  for (const name of Object.keys(minimaxApiProfiles(saved))) reserved.add(name);
+  const billingMode = normalizeMinimaxBillingMode(saved.minimaxBillingMode);
+  const apiRegion = normalizeMinimaxRegionSetting(saved.minimaxApiRegion || saved.minimaxApiHost);
+  const entries = [];
+  let fallbackIndex = 0;
+  for (const account of accounts) {
+    const id = String(account?.id || '').trim();
+    if (!id) continue;
+    const apiKey = cleanApiKeySecret(store.readManagedAccountCredential('minimax', id, 'apiKey'));
+    if (!apiKey) continue;
+    let name = normalizeNamedProfileName(account.accountLabel, { reservedNames: [...reserved] });
+    if (!name) {
+      do { fallbackIndex += 1; name = `account-${fallbackIndex}`; } while (reserved.has(name));
+    }
+    reserved.add(name);
+    entries.push({ id, name, apiKey, enabled: account.enabled !== false, billingMode, apiRegion });
+  }
+  if (!entries.length) return;
+  try {
+    const { migratedIds } = store.migrateMinimaxManagedAccounts(entries);
+    if (migratedIds.length > 0) {
+      console.log(`[credentials] Migrated ${migratedIds.length} minimax managed account(s) to profiles`);
+    }
+  } catch (error) {
+    reportCredentialStorageError('could not migrate minimax managed accounts', error);
+  }
+}
+
 function loadCredentialSettings(saved) {
   try {
     const store = ensureCredentialStore();
     store.migrateLegacySettings(saved);
+    migrateMinimaxManagedAccounts(store, saved);
     const stored = store.settingsCredentials();
     // Cleanup is intentionally independent from the migration marker. If the
     // first cleanup write fails after credentials.json was committed, retry on
@@ -2859,7 +2908,9 @@ function readSettings() {
     merged.antigravityManagedAccounts = normalizeAntigravityManagedAccounts(merged.antigravityManagedAccounts);
     merged.workbuddyManagedAccounts = workbuddyOAuth.normalizeManagedAccounts(merged.workbuddyManagedAccounts);
     merged.mimoManagedAccounts = normalizeMimoManagedAccounts(merged.mimoManagedAccounts);
-    merged.minimaxManagedAccounts = normalizeApiKeyAccountsMeta(merged.minimaxManagedAccounts);
+    // minimax 托管账号已迁移为上游 profiles（migrateMinimaxManagedAccounts），
+    // 残留的旧元数据不再参与任何投影。
+    delete merged.minimaxManagedAccounts;
     merged.deepseekManagedAccounts = normalizeApiKeyAccountsMeta(merged.deepseekManagedAccounts);
     merged.zaiManagedAccounts = normalizeApiKeyAccountsMeta(merged.zaiManagedAccounts);
     if (saved.keepAboveTaskbar !== undefined) {
@@ -2918,6 +2969,8 @@ function readSettings() {
     merged.edgeDockWarnColors = parseBoolean(merged.edgeDockWarnColors, false);
     merged.edgeDockMacBackdrop = normalizeEdgeDockBackdropMode(merged.edgeDockMacBackdrop);
     merged.edgeDockWindowsBackdrop = normalizeWindowsDockBackdropMode(merged.edgeDockWindowsBackdrop);
+    merged.edgeDockBubbleSize = normalizeEdgeDockBubbleSize(merged.edgeDockBubbleSize);
+    merged.edgeDockBubbleCustomScale = normalizeEdgeDockCustomScale(merged.edgeDockBubbleCustomScale);
     merged.edgeDockSize = normalizeEdgeDockSize(merged.edgeDockSize);
     merged.edgeDockCustomScale = normalizeEdgeDockCustomScale(merged.edgeDockCustomScale);
     merged.edgeDockItems = normalizeEdgeDockItems(merged.edgeDockItems);
@@ -3561,13 +3614,19 @@ function limitInvalidationKey(scope) {
     || scope?.accountLabel
     || ''
   ).trim();
-  return account ? `${provider}:${account}` : `${provider}:*`;
+  if (account) return `${provider}:${account}`;
+  return provider === 'minimax' && scope?.source === 'api' ? `${provider}:source:api` : `${provider}:*`;
 }
 
 function rememberPendingLimitInvalidation(scope, reason, options = {}) {
   const refresh = options.refresh !== false;
   const normalized = { ...scope, provider: String(scope?.provider || '').trim().toLowerCase() };
   const key = limitInvalidationKey(normalized);
+  const broad = pendingLimitInvalidations.get(`${normalized.provider}:*`);
+  if (normalized.provider === 'minimax' && normalized.source === 'api' && broad?.clear) {
+    broad.refresh ||= refresh;
+    return;
+  }
   let clear = options.clear === true || pendingLimitInvalidations.get(key)?.clear === true;
   if (key.endsWith(':*')) {
     for (const pendingKey of pendingLimitInvalidations.keys()) {
@@ -5750,14 +5809,12 @@ function settingsForRenderer() {
     antigravityManagedAccounts: antigravityAccountsForRenderer(),
     workbuddyManagedAccounts: workbuddyAccountsForRenderer(),
     mimoManagedAccounts: mimoAccountsForRenderer(),
-    minimaxManagedAccounts: apiKeyAccountControllers.minimax.accountsForRenderer(),
     deepseekManagedAccounts: apiKeyAccountControllers.deepseek.accountsForRenderer(),
     zaiManagedAccounts: apiKeyAccountControllers.zai.accountsForRenderer(),
     ...accountStatusProjection(settings, process.env),
-    // dev 多账号：三家的“已配置”兼容单 key 与托管账号（任一启用账号即视为已配置），
-    // 覆盖上面的派生投影。
+    // dev 多账号：两家的“已配置”兼容单 key 与托管账号（任一启用账号即视为已配置），
+    // 覆盖上面的派生投影。minimax 已改由 accountStatus 动态计算（profiles 多 key）。
     deepseekApiKeyConfigured: Boolean(settings?.deepseekApiKey) || (apiKeyAccountControllers.deepseek.accountsForRenderer() || []).some((account) => account.enabled !== false),
-    minimaxApiKeyConfigured: Boolean(settings?.minimaxApiKey) || (apiKeyAccountControllers.minimax.accountsForRenderer() || []).some((account) => account.enabled !== false),
     zaiApiKeyConfigured: Boolean(settings?.zaiApiKey) || (apiKeyAccountControllers.zai.accountsForRenderer() || []).some((account) => account.enabled !== false),
     claudeWebLegacyAccount: claudeAccountService().legacyAccount(),
     claudeWebLoginStatuses: claudeAccountService().loginStatuses(),
@@ -6732,7 +6789,7 @@ function ensureTray() {
           home: true,
           project: settings?.projectsEnabled !== false,
           session: true,
-          limits: settings?.limitsEnabled !== false && parseLimitProviders(settings?.limitProviders).length > 0,
+          limits: settings?.limitsEnabled !== false && migrateLimitProviders(settings?.limitProviders).length > 0,
           trends: settings?.historyEnabled !== false,
           status: true
         }
@@ -8046,8 +8103,17 @@ async function cursorStatusValue({ discover = false } = {}) {
   }
   const disabled = new Set(normalizeCursorDisabledAccountIds(settings?.cursorDisabledAccountIds));
   const manual = new Set(normalizeCursorAccountIds(settings?.cursorManualAccountIds));
-  const safeAccounts = await Promise.all(accounts.map(async (account) => {
+  const desktop = cursorAuth.readCursorDesktopSignIn();
+  const listedAccounts = await Promise.all(accounts.map(async (account) => {
     const probeResult = await cursorProbe.probe(account.sessionToken);
+    const expired = !probeResult.ok && probeResult.error?.kind === 'unauthorized';
+    // Desktop-detected accounts follow the desktop sign-in; manual ones stay
+    // until removed. Hidden accounts keep their credentials and usage history.
+    if (!manual.has(account.id) && !isCursorDetectedAccountCurrent({
+      desktop,
+      userId: cursorAuth.canonicalCursorUserId(account.userId || account.id),
+      unauthorized: expired
+    })) return null;
     return {
       id: account.id,
       enabled: !disabled.has(account.id),
@@ -8055,10 +8121,11 @@ async function cursorStatusValue({ discover = false } = {}) {
       email: probeResult.ok ? probeResult.user?.email || '' : '',
       label: account.label || '',
       membershipType: probeResult.ok ? probeResult.usage.membershipType || '' : '',
-      expired: !probeResult.ok && probeResult.error?.kind === 'unauthorized',
+      expired,
       error: probeResult.ok ? '' : probeResult.error?.message || ''
     };
   }));
+  const safeAccounts = listedAccounts.filter(Boolean);
   return {
     loggedIn: safeAccounts.length > 0,
     accounts: safeAccounts,
@@ -8284,6 +8351,7 @@ app.whenReady().then(() => {
     patch = skinSelection.patch;
     const contentRuntime = getSyncContentRuntime();
     credentialCommands.noteSettingsPatch(patch);
+    minimaxApiKeys.noteSettingsPatch(patch);
     const previousSettingsState = settings;
     const previousRuntimeSettings = JSON.parse(JSON.stringify(settings));
     const previousClients = settings.clients;
@@ -8440,6 +8508,8 @@ app.whenReady().then(() => {
       edgeDockWarnColors: parseBoolean(patch.edgeDockWarnColors ?? settings.edgeDockWarnColors, false),
       edgeDockMacBackdrop: normalizeEdgeDockBackdropMode(patch.edgeDockMacBackdrop ?? settings.edgeDockMacBackdrop),
       edgeDockWindowsBackdrop: normalizeWindowsDockBackdropMode(patch.edgeDockWindowsBackdrop ?? settings.edgeDockWindowsBackdrop),
+      edgeDockBubbleSize: normalizeEdgeDockBubbleSize(patch.edgeDockBubbleSize ?? settings.edgeDockBubbleSize),
+      edgeDockBubbleCustomScale: normalizeEdgeDockCustomScale(patch.edgeDockBubbleCustomScale ?? settings.edgeDockBubbleCustomScale),
       edgeDockSize: normalizeEdgeDockSize(patch.edgeDockSize ?? settings.edgeDockSize),
       edgeDockCustomScale: normalizeEdgeDockCustomScale(patch.edgeDockCustomScale ?? settings.edgeDockCustomScale),
       // `null` is a real value here (back to the automatic default), so the
@@ -8464,7 +8534,7 @@ app.whenReady().then(() => {
           { currencyApi: { normalizeCurrency } }
         )
       },
-      limitProviders: patch.limitProviders !== undefined ? parseLimitProviders(patch.limitProviders).join(',') : settings.limitProviders,
+      limitProviders: patch.limitProviders !== undefined ? migrateLimitProviders(patch.limitProviders) : settings.limitProviders,
       limitProviderOrder: patch.limitProviderOrder !== undefined ? migrateLimitProviderOrder(patch.limitProviderOrder) : settings.limitProviderOrder,
       clientDisplayOrder: patch.clientDisplayOrder !== undefined ? migrateClientDisplayOrder(patch.clientDisplayOrder) : (settings.clientDisplayOrder || ''),
       hiddenClients: patch.hiddenClients !== undefined ? migrateClientSelection(patch.hiddenClients, normalizeHiddenClients) : migrateClientSelection(settings.hiddenClients, normalizeHiddenClients),
@@ -8705,6 +8775,9 @@ app.whenReady().then(() => {
     if (patch && patch.edgeDockCustomScale !== undefined && edgeDockController?.isRunning()) {
       edgeDockController.previewScale(patch.edgeDockCustomScale);
     }
+    if (patch && patch.edgeDockBubbleCustomScale !== undefined && edgeDockController?.isRunning()) {
+      edgeDockController.previewScale(patch.edgeDockBubbleCustomScale, 'bubble');
+    }
     if (patch && patch.notchCustomScale !== undefined && notchController?.isRunning()) {
       notchController.previewScale(patch.notchCustomScale);
     }
@@ -8822,6 +8895,7 @@ app.whenReady().then(() => {
     return true;
   });
   ipcMain.handle('stats:get', async (_event, options) => {
+    if (options?.force === true && options?.feedback === true) void pluginRuntime?.refreshLimits().catch(error => console.log(`[plugins] Limits refresh failed: ${error.message}`));
     const revision = statsPushRevision;
     const fetched = await (options?.force === true && options?.feedback === true ? refreshManualStats() : fetchStats(options));
     // A push from the same source/generation supersedes its pending read. A
@@ -9557,6 +9631,23 @@ app.whenReady().then(() => {
     void queueLimitInvalidation({ provider: 'opencode' }, 'ambient-toggle', { clear: true });
     return { ok: true };
   });
+  const minimaxApiKeys = createMinimaxApiKeys({
+    getSettings: () => settings, saveSettings,
+    probeDeps: () => electronProviderDeps({ env: {}, signal: AbortSignal.timeout(15_000) }),
+    changed: (accountKey, refresh, reason) => {
+      credentialCommands.noteSettingsPatch({ minimaxApiKey: '' });
+      deviceRuntimeHandle?.reconfigureLimits(electronLimitsConfig());
+      void queueLimitInvalidation({ provider: 'minimax', source: 'api', accountKey }, reason, { clear: true, refresh });
+      pushSettingsToRenderer();
+    }
+  });
+  ipcMain.handle('minimax:getKeys', () => minimaxApiKeys.getKeys());
+  for (const method of ['addKey', 'removeKey']) {
+    ipcMain.handle(`minimax:${method}`, async (_event, ...args) => {
+      try { return await minimaxApiKeys[method](...args); }
+      catch (error) { return { ok: false, error: error?.message || 'Could not save MiniMax API key' }; }
+    });
+  }
   ipcMain.handle('openrouter:getProfiles', async () => {
     return {
       profiles: redactOpenRouterProfilesForRenderer(settings.openrouterProfiles || {}),
@@ -9973,6 +10064,7 @@ app.whenReady().then(() => {
   function startPluginRuntime() {
     try {
       pluginRuntime = createPluginRuntime({
+        fetchImpl: electronLimitsFetch(),
         getAppSettings: settingsForRenderer,
         electron: { app, BrowserWindow, utilityProcess: require('electron').utilityProcess, Notification, ipcMain, nativeImage, session, shell, dialog },
         userDataDir: app.getPath('userData'),

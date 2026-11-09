@@ -10,8 +10,8 @@ const { createApiKeyAccountController } = require('../../src/electron/apiKeyAcco
 function createHarness(options = {}) {
   const state = {
     settings: {
-      minimaxManagedAccounts: [...(options.initialAccounts || [])],
-      minimaxApiKey: options.legacyKey || ''
+      deepseekManagedAccounts: [...(options.initialAccounts || [])],
+      deepseekApiKey: options.legacyKey || ''
     },
     persisted: 0,
     persistError: null,
@@ -21,7 +21,7 @@ function createHarness(options = {}) {
     validations: []
   };
   const controller = createApiKeyAccountController({
-    provider: 'minimax',
+    provider: 'deepseek',
     getSettings: () => state.settings,
     persistSettings: () => {
       state.persisted += 1;
@@ -53,12 +53,12 @@ function createHarness(options = {}) {
   return { state, controller };
 }
 
-const KEY_A = 'sk-cp-aaaa';
-const KEY_B = 'sk-cp-bbbb';
+const KEY_A = 'sk-ds-aaaa';
+const KEY_B = 'sk-ds-bbbb';
 
 function accountKeyFor(key) {
   const { managedApiKeyAccountKey } = require('../../src/shared/apiKeyAccounts');
-  return managedApiKeyAccountKey('minimax', key);
+  return managedApiKeyAccountKey('deepseek', key);
 }
 
 test('addAccount validates before persisting and strips the key from settings metadata', async () => {
@@ -69,10 +69,10 @@ test('addAccount validates before persisting and strips the key from settings me
   assert.equal(result.ok, true);
   assert.equal(state.validations.length, 1, 'exactly one live validation');
   assert.equal(state.credentials.get(result.accounts[0].id), KEY_A, 'key lands in credentials only');
-  assert.equal(JSON.stringify(state.settings.minimaxManagedAccounts).includes(KEY_A), false, 'metadata never carries the raw key');
+  assert.equal(JSON.stringify(state.settings.deepseekManagedAccounts).includes(KEY_A), false, 'metadata never carries the raw key');
   assert.equal(result.accounts[0].accountLabel, 'Personal');
   assert.deepEqual(state.invalidations, [{
-    scope: { provider: 'minimax', accountId: result.accounts[0].id, accountKey: accountKeyFor(KEY_A) },
+    scope: { provider: 'deepseek', accountId: result.accounts[0].id, accountKey: accountKeyFor(KEY_A) },
     reason: 'account-added',
     invalidationOptions: undefined
   }]);
@@ -101,7 +101,7 @@ test('updateAccount with an unchanged key only relabels and refreshes the lane',
   assert.equal(state.validations.length, 0, 'no live validation when the key is unchanged');
   assert.equal(result.accounts[0].accountLabel, 'Work');
   assert.deepEqual(state.invalidations[state.invalidations.length - 1], {
-    scope: { provider: 'minimax', accountId: id, accountKey: accountKeyFor(KEY_A) },
+    scope: { provider: 'deepseek', accountId: id, accountKey: accountKeyFor(KEY_A) },
     reason: 'account-state',
     invalidationOptions: { clear: false, refresh: true }
   });
@@ -155,10 +155,10 @@ test('migrateLegacyKey converts the single-key era once and is idempotent', () =
   const { state, controller } = createHarness({ legacyKey: KEY_A });
 
   controller.migrateLegacyKey();
-  assert.equal(state.settings.minimaxApiKey, '', 'legacy key cleared');
-  assert.equal(state.settings.minimaxManagedAccounts.length, 1);
+  assert.equal(state.settings.deepseekApiKey, '', 'legacy key cleared');
+  assert.equal(state.settings.deepseekManagedAccounts.length, 1);
   assert.equal(state.credentials.size, 1);
-  const account = state.settings.minimaxManagedAccounts[0];
+  const account = state.settings.deepseekManagedAccounts[0];
   assert.equal(account.accountKey, accountKeyFor(KEY_A), 'identity formula unchanged');
   assert.ok(!('apiKey' in account), 'metadata carries no key');
 
@@ -174,15 +174,15 @@ test('migrateLegacyKey keeps the legacy path when the settings write fails', () 
 
   controller.migrateLegacyKey();
 
-  assert.equal(state.settings.minimaxApiKey, KEY_A, 'legacy key preserved');
-  assert.deepEqual(state.settings.minimaxManagedAccounts, []);
+  assert.equal(state.settings.deepseekApiKey, KEY_A, 'legacy key preserved');
+  assert.deepEqual(state.settings.deepseekManagedAccounts, []);
 });
 
 test('reorderAccounts rewrites the display order and tolerates partial input', async () => {
   const { state, controller } = createHarness();
   const first = await controller.addAccount(KEY_A, '');
   const second = await controller.addAccount(KEY_B, '');
-  const third = await controller.addAccount('sk-cp-cccc', '');
+  const third = await controller.addAccount('sk-ds-cccc', '');
   const ids = first.accounts.map((entry) => entry.id);
 
   // 把第二个账号拖到最前：完整 id 顺序幂等重排。
@@ -192,7 +192,7 @@ test('reorderAccounts rewrites the display order and tolerates partial input', a
 
   assert.equal(result.ok, true);
   assert.deepEqual(result.accounts.map((entry) => entry.keySuffix), ['bbbb', 'aaaa', 'cccc']);
-  assert.equal(state.settings.minimaxManagedAccounts.map((entry) => entry.keySuffix).join(''), 'bbbbaaaacccc');
+  assert.equal(state.settings.deepseekManagedAccounts.map((entry) => entry.keySuffix).join(''), 'bbbbaaaacccc');
 
   // 漏传的账号保持在尾部，未知 id 被忽略——重排永远收敛。
   const partial = await controller.reorderAccounts([thirdId, 'unknown-id']);

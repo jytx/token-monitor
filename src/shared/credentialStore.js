@@ -8,6 +8,9 @@ const { providerCredentialSettingPaths } = require('./limits/accounts');
 const CREDENTIALS_VERSION = 1;
 const SETTINGS_MIGRATION_VERSION = 1;
 const MIMO_MIGRATION_VERSION = 1;
+// dev 托管多账号（minimax）退役迁移：一次搬家 providers.minimax.accounts.<id>
+// → providers.minimax.profiles.<name>（上游 PR #1284 的 profiles 结构）。
+const MINIMAX_MANAGED_MIGRATION_VERSION = 1;
 
 // Provider-owned keys come from the account declarations (each field's
 // storePath), so adding a provider credential never edits this file. The two
@@ -447,6 +450,50 @@ class CredentialStore {
     }
     if (migratedIds.length === 0) return { migratedIds, document };
     document.migrations.mimoFiles = MIMO_MIGRATION_VERSION;
+    return { migratedIds, document: this.writeDocument(document) };
+  }
+
+  // dev 托管多账号（minimax）退役迁移：settings 侧只保留元数据，密钥在
+  // providers.minimax.accounts.<id>.apiKey；上游 profiles 则整体存放在
+  // providers.minimax.profiles.<name>。两侧 accountKey 公式一致
+  // （hashKey('minimax', apiKey)），搬完密钥账号身份不变。entry 由 main 侧
+  // 备好（name 已按 profile 命名规则去重），此处只做原子搬运与标记。
+  migrateMinimaxManagedAccounts(entries) {
+    const document = this.readDocument();
+    if (Number(document.migrations.minimaxManagedAccounts || 0) >= MINIMAX_MANAGED_MIGRATION_VERSION) {
+      return { migratedIds: [], document };
+    }
+    const migratedIds = [];
+    let profiles = valueAt(document.credentials, ['providers', 'minimax', 'profiles']);
+    for (const entry of entries || []) {
+      const id = safeDynamicKey(entry?.id);
+      const name = safeDynamicKey(entry?.name);
+      const apiKey = typeof entry?.apiKey === 'string' ? entry.apiKey : '';
+      if (!id || !name || !credentialValuePresent(apiKey)) continue;
+      const legacyPath = ['providers', 'minimax', 'accounts', id, 'apiKey'];
+      if (!credentialValuePresent(valueAt(document.credentials, legacyPath))) continue;
+      if (!isObject(profiles)) profiles = {};
+      // 已有同名 profile（用户提前用上游 UI 建过）时保留现有数据，只搬走旧密钥。
+      if (!credentialValuePresent(profiles[name])) {
+        profiles[name] = {
+          apiKey,
+          enabled: entry.enabled !== false,
+          ...(entry.billingMode ? { billingMode: entry.billingMode } : {}),
+          ...(entry.apiRegion ? { apiRegion: entry.apiRegion } : {})
+        };
+        migratedIds.push(id);
+      }
+      deleteValueAt(document.credentials, legacyPath);
+    }
+    if (migratedIds.length > 0) {
+      setValueAt(document.credentials, ['providers', 'minimax', 'profiles'], profiles);
+      const remaining = valueAt(document.credentials, ['providers', 'minimax', 'accounts']);
+      if (!isObject(remaining) || Object.keys(remaining).length === 0) {
+        deleteValueAt(document.credentials, ['providers', 'minimax', 'accounts']);
+      }
+    }
+    // 即使没有可搬的条目也置位：残留元数据（已无密钥）不值得每次启动重算。
+    document.migrations.minimaxManagedAccounts = MINIMAX_MANAGED_MIGRATION_VERSION;
     return { migratedIds, document: this.writeDocument(document) };
   }
 }

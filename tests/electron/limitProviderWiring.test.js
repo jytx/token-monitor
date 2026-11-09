@@ -98,6 +98,7 @@ test('CREDENTIAL_SETTING_PATHS is exactly this set (the store is default-deny)',
     kimiWebAccessToken: ['providers', 'kimi', 'webAccessToken'],
     copilotApiToken: ['providers', 'copilot', 'apiToken'],
     zedCookie: ['providers', 'zed', 'cookie'],
+    mistralCookie: ['providers', 'mistral', 'cookie'],
     typesafeCookie: ['providers', 'typesafe', 'cookie'],
     stepfunToken: ['providers', 'stepfun', 'token'],
     notionCookie: ['providers', 'notion', 'cookie'],
@@ -113,6 +114,7 @@ test('CREDENTIAL_SETTING_PATHS is exactly this set (the store is default-deny)',
     devinBearerToken: ['providers', 'devin', 'bearerToken'],
     deepseekApiKey: ['providers', 'deepseek', 'apiKey'],
     openrouterProfiles: ['providers', 'openrouter', 'profiles'],
+    minimaxApiProfiles: ['providers', 'minimax', 'profiles'],
     minimaxApiKey: ['providers', 'minimax', 'apiKey'],
     volcengineAccessKeyId: ['providers', 'volcengine', 'accessKeyId'],
     volcengineSecretAccessKey: ['providers', 'volcengine', 'secretAccessKey'],
@@ -160,12 +162,13 @@ test('LIMIT_PROVIDER_SETTING_KEYS is exactly this set (drives per-provider refre
     zed: ['zedCookie'],
     commandcode: ['commandcodeCookie'],
     mimo: ['mimoManagedAccounts'],
-    zai: ['zaiManagedAccounts', 'zaiApiKey', 'zaiApiRegion'],
+    zai: ['zaiApiKey', 'zaiApiRegion'],
     zaiteam: ['zaiTeamApiKey', 'zaiTeamOrganizationId', 'zaiTeamProjectId'],
     workbuddy: ['workbuddyAccessToken', 'workbuddyUserId', 'workbuddyEnterpriseId', 'workbuddyLocale', 'workbuddyDomain', 'workbuddyDepartmentInfo'],
     qoder: ['qoderCookie', 'qoderSite'],
-    deepseek: ['deepseekManagedAccounts', 'deepseekApiKey'],
+    deepseek: ['deepseekApiKey'],
     devin: ['devinBearerToken', 'devinOrganization'],
+    mistral: ['mistralCookie'],
     typesafe: ['typesafeCookie'],
     stepfun: ['stepfunToken'],
     notion: ['notionCookie', 'notionWorkspaceId'],
@@ -173,7 +176,7 @@ test('LIMIT_PROVIDER_SETTING_KEYS is exactly this set (drives per-provider refre
     manus: ['manusSessionToken'],
     muse: ['museWebCookie'],
     openrouter: ['openrouterProfiles'],
-    minimax: ['minimaxManagedAccounts', 'minimaxApiKey', 'minimaxApiRegion', 'minimaxBillingMode'],
+    minimax: ['minimaxApiProfiles', 'minimaxApiKey', 'minimaxApiRegion', 'minimaxBillingMode'],
     volcengine: [
       'volcengineAccessKeyId', 'volcengineSecretAccessKey', 'volcengineRegion',
       'volcengineAgentAccessKeyId', 'volcengineAgentSecretAccessKey', 'volcengineAgentRegion'
@@ -287,7 +290,7 @@ test('settings:update normalizes provider fields and strips separately managed a
     'volcengineAgentSecretAccessKey', 'volcengineAgentRegion', 'qoderCookie', 'qoderSite',
     'devinBearerToken', 'devinOrganization', 'alibabaCookie', 'alibabaVariant',
     'traeCookie', 'traeAccessToken', 'traeDeviceId', 'zedCookie', 'typesafeCookie', 'stepfunToken',
-    'commandcodeCookie', 'kimiApiKey', 'kimiWebAccessToken', 'ollamaApiKey', 'ollamaCookie', 'notionCookie', 'notionWorkspaceId', 'manusSessionToken', 'museWebCookie', 'opendesignCookie'
+    'mistralCookie', 'commandcodeCookie', 'kimiApiKey', 'kimiWebAccessToken', 'ollamaApiKey', 'ollamaCookie', 'notionCookie', 'notionWorkspaceId', 'manusSessionToken', 'museWebCookie', 'opendesignCookie'
   ].sort());
   for (const key of normalizedKeys) {
     const value = key === 'claudeWebCookie' ? 'sessionKey=sk-ant-test'
@@ -467,6 +470,17 @@ test('account projections redact secrets while preserving profile metadata and s
   assert.equal(status.clineCredentialSource, 'settings');
 });
 
+test('MiniMax profiles keep the legacy configured flag truthful', () => {
+  const profiles = accountStatusProjection({ minimaxApiProfiles: { work: { apiKey: 'saved-secret', billingMode: 'api' } } }, {});
+  assert.equal(profiles.minimaxApiKeyConfigured, true);
+  assert.equal(profiles.minimaxApiKeySource, 'settings');
+  for (const env of [{}, { MINIMAX_CODING_API_KEY: 'env-secret' }]) {
+    const disabled = accountStatusProjection({ minimaxApiProfiles: { work: { apiKey: 'saved-secret', enabled: false } } }, env);
+    assert.equal(disabled.minimaxApiKeyConfigured, false);
+    assert.equal(disabled.minimaxApiKeySource, '');
+  }
+});
+
 test('the renderer receives serializable account forms but no credential declarations', () => {
   const forms = limitAccountFormsForRenderer();
   const generated = LIMIT_PROVIDER_IDS.filter((id) => forms.some((form) => form.id === id));
@@ -494,13 +508,7 @@ test('the renderer receives serializable account forms but no credential declara
   });
   assert.match(mainSource, /limitAccountForms: limitAccountFormsForRenderer\(\)/);
   assert.match(indexHtml, /<script src="limits\/accountPanels\.js"><\/script>/);
-  // dev 混合形态：三家（minimax/deepseek/zai）保留手写托管组 + 表单声明并存
-  //（真实渲染由静态组承担，setupLimitAccountPanels 跳过动态面板），豁免此不变式。
-  const hybridPanelIds = new Set([...appSource.matchAll(/^ {2}(\w+): \{ group: '[^']+'[\s\S]{0,80}?status:/gm)].map((m) => m[1]));
-  for (const { id } of forms) {
-    if (hybridPanelIds.has(id)) continue;
-    assert.doesNotMatch(indexHtml, new RegExp(`id="${id}AccountGroup"`), id);
-  }
+  for (const { id } of forms) assert.doesNotMatch(indexHtml, new RegExp(`id="${id}AccountGroup"`), id);
   assert.match(appSource, /limitAccountPanelsApi\.createCredentialPanel\(form/);
 });
 
@@ -566,12 +574,7 @@ test('every provider with an account panel has its group and status markup in in
   // get theirs generated. The map is the list of those whose markup is static.
   assert.deepEqual(
     LIMIT_PROVIDER_IDS.filter((provider) => !groupIds[provider]).sort(),
-    // dev 混合形态：minimax/deepseek/zai 有静态托管组，其中保留表单声明
-    // 的（如 minimax，共享保存路径）已在 NODES 的不再要求生成面板；上游
-    // v0.84 起 muse/manus 改走账号表单通道，muse 不再需要显式列出。
-    ['grok', 'kiro', ...limitAccountFormsForRenderer()
-      .map(({ id }) => id)
-      .filter((id) => !groupIds[id])].sort()
+    ['grok', 'kiro', ...limitAccountFormsForRenderer().map(({ id }) => id)].sort()
   );
   for (const [provider, id] of Object.entries(groupIds)) {
     assert.ok(LIMIT_PROVIDER_IDS.includes(provider), `${provider} is a catalog id`);
@@ -601,10 +604,10 @@ test('MiniMax implicit region remains env-driven after unrelated saves and reloa
   assert.deepEqual(change.limitScopes, [{ provider: 'minimax' }]);
   assert.equal(change.usageStructural, false);
   const { settingsLimitInvalidationPlan } = require('../../src/electron/deviceRuntimeCoordinator');
-  assert.deepEqual(settingsLimitInvalidationPlan(change), [{ scope: { provider: 'minimax' }, reason: 'settings-change', options: { clear: true } }]);
+  assert.deepEqual(settingsLimitInvalidationPlan(change), [{ scope: { provider: 'minimax', source: 'api' }, reason: 'settings-change', options: { clear: true } }]);
 });
 
-test('MiniMax billing choice survives reload and clears only its provider quota', () => {
+test('MiniMax key billing choice survives reload and invalidates only its API source', () => {
   const { initialAccountSettings } = require('../../src/electron/limits/accountSettings');
   assert.equal(initialAccountSettings({}).minimaxBillingMode, 'token-plan');
   assert.equal(limitsConfigFromSettings({}, { env: {} }).minimaxBillingMode, 'token-plan');
@@ -621,7 +624,7 @@ test('MiniMax billing choice survives reload and clears only its provider quota'
   assert.deepEqual(change.limitScopes, [{ provider: 'minimax' }]);
   assert.equal(change.usageStructural, false);
   const { settingsLimitInvalidationPlan } = require('../../src/electron/deviceRuntimeCoordinator');
-  assert.deepEqual(settingsLimitInvalidationPlan(change), [{ scope: { provider: 'minimax' }, reason: 'settings-change', options: { clear: true } }]);
+  assert.deepEqual(settingsLimitInvalidationPlan(change), [{ scope: { provider: 'minimax', source: 'api' }, reason: 'settings-change', options: { clear: true } }]);
 });
 
 test('Trae credential source follows the usable credential after a malformed stored value', () => {

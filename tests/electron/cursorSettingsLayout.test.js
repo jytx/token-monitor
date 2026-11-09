@@ -80,7 +80,7 @@ function functionBodyBeforeMarker(source, name, marker) {
 
 function runMainFunction(source, name, nextName, expression, context = {}) {
   const body = functionBody(source, name, nextName);
-  return vm.runInNewContext(`${body}\n${expression}`, context);
+  return vm.runInNewContext(`${body}\n${expression}`, { require: id => { assert.equal(id, './plugins/limits'); return require('../../src/electron/plugins/limits'); }, ...context });
 }
 
 function runRendererFunctions(source, names, expression, context = {}) {
@@ -274,6 +274,11 @@ test('Cursor account discovery runs automatically without a separate refresh act
   assert.match(statusBody, /await cursorAuth\.runCursorDiscover\(\)/);
   assert.doesNotMatch(statusBody, /runCursorSync/);
   assert.match(statusBody, /managementBlocked/);
+  // Desktop-detected accounts follow the desktop sign-in; manual accounts are never hidden.
+  assert.match(statusBody, /const desktop = cursorAuth\.readCursorDesktopSignIn\(\)/);
+  assert.match(statusBody, /if \(!manual\.has\(account\.id\) && !isCursorDetectedAccountCurrent\(\{/);
+  assert.match(statusBody, /unauthorized: expired/);
+  assert.match(statusBody, /listedAccounts\.filter\(Boolean\)/);
   assert.match(main, /options\?\.discover !== true/);
   assert.doesNotMatch(main, /ipcMain\.handle\('cursor:refresh'/);
 
@@ -758,7 +763,7 @@ test('Codex system account switching is exposed from limits account rows', () =>
   assert.doesNotMatch(renderLimits, /codexSwitchPopoverRenderPending/);
 });
 
-test('DeepSeek account panel provides a first-class managed-account entry', () => {
+test('DeepSeek keeps the dev managed-account panel and MiniMax keys use the shared account shell', () => {
   const html = readRendererFile('index.html');
   const details = html.match(/<div id="deepseekSettingsDetails"[\s\S]*?<div id="deepseekErrorMessage" class="settings-note error hidden"><\/div>/)?.[0] || '';
   assert.match(details, /<div id="deepseekAccountList" class="managed-account-list">/);
@@ -769,13 +774,30 @@ test('DeepSeek account panel provides a first-class managed-account entry', () =
   assert.match(details, /<button id="deepseekSaveAccountButton"[\s\S]*data-i18n="settings\.deepseek\.saveAccount">/);
   assert.doesNotMatch(details, /deepseekLogoutButton|deepseekRefreshButton|deepseekApiKeySubmit/);
 
-  // MiniMax follows the selection, with successful-probe status for Auto;
-  // the form declares that, so the renderer has no MiniMax branch of its own.
   const app = readRendererFile('app.js');
   const setupBody = functionBodyBeforeMarker(app, 'setupCursorAccountUI', '\nsetupCursorAccountUI();');
   assert.match(setupBody, /setupApiKeyAccountCard\('deepseek'/);
   assert.match(setupBody, /window\.tokenMonitor\.openExternal\('https:\/\/platform\.deepseek\.com\/api_keys'\)/);
   assert.doesNotMatch(setupBody, /saveSettings\(\{ deepseekApiKey/);
+
+  // minimax 已退役 dev 托管层：无表单声明，面板为上游共享账号外壳。
+  const { limitAccountFormsForRenderer, initialAccountSettings } = require('../../src/electron/limits/accountSettings');
+  const forms = limitAccountFormsForRenderer();
+  assert.equal(forms.some(({ id }) => id === 'minimax'), false);
+
+  // The region never becomes a credential: no store path, so it stays in
+  // settings.json only after a selection; an implicit default stays empty.
+  assert.equal(initialAccountSettings({}).minimaxApiRegion, '');
+  assert.equal(initialAccountSettings({ MINIMAX_API_REGION: 'cn' }).minimaxApiRegion, '');
+  assert.equal(initialAccountSettings({ TOKEN_MONITOR_MINIMAX_API_REGION: 'intl' }).minimaxApiRegion, '');
+  assert.equal(initialAccountSettings({ MINIMAX_API_HOST: 'api.minimax.io' }).minimaxApiRegion, '');
+  assert.match(app, /limitAccountPanelsApi\.resolveOpenUrl\(form, \{\s*document,\s*provider: externalProviderForAccount\(form\.id\)/);
+  assert.doesNotMatch(app, /minimaxPlatformUrl|form\.id === 'minimax'/);
+  const { limitProviderUrlAllowed } = require('../../src/shared/limits/accounts');
+  for (const host of ['platform.minimax.io', 'platform.minimaxi.com']) {
+    assert.equal(limitProviderUrlAllowed(host, '/user-center/payment/token-plan'), true, host);
+  }
+  assert.doesNotMatch(app, /render(Deepseek|Minimax)Status|set(Deepseek|Minimax)AccountExpanded|(deepseek|minimax)AccountLinked/);
 });
 
 test('API key account entries share styling and Copilot uses the folded token entry', () => {
@@ -835,7 +857,7 @@ test('API key account entries share styling and Copilot uses the folded token en
     }
   }
 
-  assert.match(css, /\.thirdparty-field :is\(input, select\)\s*\{[\s\S]*?font-size: 0\.75rem;/);
+  assert.match(css, /\.thirdparty-field :is\(input, select, \.select-control-trigger\)\s*\{[\s\S]*?font-size: 0\.75rem;/);
 });
 
 test('Copilot account panel provides GitHub sign-in plus manual token fallback', () => {
@@ -1182,11 +1204,12 @@ test('Claude Web account panel stores a redacted cookie and opens only the usage
   assert.equal(limitProviderUrlAllowed('claude.ai', '/'), false);
 });
 
-test('DeepSeek and MiniMax key changes invalidate stale provider status before re-checking', () => {
+test('DeepSeek key changes invalidate stale provider status before re-checking', () => {
   const app = readRendererFile('app.js');
   assert.match(app, /deepseek: \{ group: 'deepseekAccountGroup', status: 'deepseekApiKeyStatus' \}/);
-  // 多账号状态 pill 走托管账号列表（x/y linked），与 MiMo/MiniMax 同路径。
+  // 多账号状态 pill 走托管账号列表（x/y linked），与 MiMo 同路径。
   assert.match(app, /function renderApiKeyAccountStatus\(provider\) \{[\s\S]*renderManagedAccountList\(\{/);
+  assert.match(app, /deepseekPendingCheckSince: 0/);
 });
 
 test('DeepSeek key changes invalidate stale provider status before re-checking', () => {
@@ -1915,11 +1938,12 @@ test('collection cadence setting is exposed in the Collection panel', () => {
   assert.match(controls, /data-i18n="settings\.collection\.cadence"/);
   assert.match(controls, /value="live"/);
   assert.match(controls, /value="smart"[\s\S]*data-i18n="settings\.collection\.mode\.smart"/);
-  assert.match(i18n, /'settings\.collection\.modeDesc': 'Smart mode collects after agent activity, with an hourly reconciliation; fixed intervals turn off file watching\.'/);
+  assert.match(i18n, /"settings\.collection\.mode\.smartDesc": "Collect after agent activity, with hourly reconciliation\."/);
   assert.match(controls, /<option value="300000"/);
   assert.match(controls, /<option value="900000"/);
   assert.match(controls, /<option value="1800000"/);
-  assert.match(controls, /id="collectionCadenceNote"[\s\S]*hidden/);
+  for (const mode of ['live', 'smart', 'interval']) assert.ok(controls.includes(`data-select-description="settings.collection.mode.${mode}Desc"`));
+  assert.doesNotMatch(controls, /id="collectionCadenceNote"/);
   assert.doesNotMatch(controls, /<option value="3600000"/);
   assert.doesNotMatch(controls, /id="collectionModeInput"/);
   assert.doesNotMatch(controls, /id="collectionIntervalInput"/);
@@ -1927,7 +1951,7 @@ test('collection cadence setting is exposed in the Collection panel', () => {
   const app = readRendererFile('app.js');
   const syncBody = functionBody(app, 'syncSettingsForm', 'enabledClientSet');
   assert.match(syncBody, /collectionCadenceInput/);
-  assert.match(syncBody, /collectionCadenceNote[\s\S]*\.hidden\s*=/);
+  assert.doesNotMatch(syncBody, /collectionCadenceNote/);
 
   const listenerSlice = app.slice(
     app.indexOf("els.collectionCadenceInput?.addEventListener('change'"),
@@ -2768,7 +2792,7 @@ test('WorkBuddy Electron fetch adapter forwards parsed response JSON', () => {
 test('main settings migrateLimitProviders normalizes without expanding old defaults', () => {
   const main = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'electron', 'main.js'), 'utf8');
   const body = functionBody(main, 'migrateLimitProviders', 'migrateLimitProviderOrder');
-  assert.match(body, /return parseLimitProviders\(value\)\.join/);
+  assert.match(body, /desktopProviderPreference\(value, parseLimitProviders\)/);
   assert.doesNotMatch(body, /preMimoDefault|legacyDefault.*return defaultLimitProviders/);
 });
 
