@@ -339,7 +339,6 @@ const { normalizeNamedProfileName } = require('../shared/namedProfile');
 const { fetchDeepSeekLimits } = require('../shared/providers/deepseek/limits');
 const { fetchZaiLimits } = require('../shared/providers/zai/limits');
 const {
-  fetchMinimaxLimits,
   minimaxApiProfiles,
   normalizeMinimaxBillingMode,
   normalizeMinimaxRegionSetting

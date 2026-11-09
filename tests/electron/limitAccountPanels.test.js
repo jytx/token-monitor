@@ -636,7 +636,9 @@ test('account setting errors are reported through the persistent panel message',
   const app = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'electron', 'renderer', 'app.js'), 'utf8');
   const start = app.indexOf('function setupLimitAccountPanels()');
   const end = app.indexOf('\nfunction limitProviderAccountGroup(', start);
-  const form = limitAccountFormsForRenderer().find(({ id }) => id === 'deepseek');
+  // dev 的 deepseek 是手写托管面板（custom form，不进渲染列表），用标准
+  // credential 表单的 mistral 验证同一报错通道。
+  const form = limitAccountFormsForRenderer().find(({ id }) => id === 'mistral');
   const messages = [];
   const renders = [];
   let callbacks;
@@ -644,7 +646,7 @@ test('account setting errors are reported through the persistent panel message',
     state: { settings: { limitAccountForms: [form] } },
     document: { getElementById: (id) => id === 'accountsSettingsDetails' ? { insertBefore() {} } : null },
     limitAccountPanelsApi: { createCredentialPanel: (_, received) => { callbacks = received; return {}; } },
-    LIMIT_PROVIDERS: [{ id: 'deepseek' }],
+    LIMIT_PROVIDERS: [{ id: 'mistral' }],
     t: translated,
     limitProviderAccountGroup: () => null,
     setExternalAccountExpanded() {},
@@ -655,10 +657,10 @@ test('account setting errors are reported through the persistent panel message',
   context.limitAccountPanelsApi.syncCredentialFields = () => {};
   vm.runInNewContext(`${app.slice(start, end)}\nsetupLimitAccountPanels();`, context);
   callbacks.onFieldError(form, new Error('disk full'));
-  assert.equal(messages[0].id, 'deepseek');
+  assert.equal(messages[0].id, 'mistral');
   assert.equal(messages[0].message.key, form.failedKey);
   assert.equal(messages[0].message.params.message, 'disk full');
-  assert.deepEqual(renders, ['deepseek', 'deepseek']);
+  assert.deepEqual(renders, ['mistral', 'mistral']);
 });
 
 test('OpenDesign renders all four Cookie setup steps before its input, like TypeSafe', () => {

@@ -1947,7 +1947,7 @@ test('settings provider status waits for stats and refreshes when stats arrive',
   // list, so it must not retain a separate account-card renderer.
   // Settings pushes route through syncSettingsForm (which init() also calls), so
   // onSettingsPush itself does not duplicate the calls.
-  for (const fn of ["renderApiKeyAccountStatus('deepseek')", "renderApiKeyAccountStatus('minimax')", "renderApiKeyAccountStatus('zai')"]) {
+  for (const fn of ["renderApiKeyAccountStatus('deepseek')", "renderApiKeyAccountStatus('zai')"]) {
     assert.ok(statsRender.includes(`${fn};`), `${fn} missing from renderStatsUpdate`);
     assert.ok(syncSettings.includes(`${fn};`), `${fn} missing from syncSettingsForm`);
   }

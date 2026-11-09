@@ -34,6 +34,11 @@ function factoryChannels(source) {
       }
     }
   }
+  // 上游 minimax 多 key 面板（createMinimaxApiKeys）：getKeys 已是字面量
+  // 注册，addKey/removeKey 经 `minimax:${method}` 模板注册。
+  if (/const minimaxApiKeys = createMinimaxApiKeys\(/.test(source)) {
+    channels.push('minimax:addKey', 'minimax:removeKey');
+  }
   return channels;
 }
 

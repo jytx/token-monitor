@@ -53,6 +53,14 @@ module.exports = {
       minimaxApiKeySource: accounts.some(account => account.name !== 'environment') ? 'settings' : accounts.length ? 'env' : ''
     };
   },
+  form: {
+    kind: 'custom',
+    fields: [
+      { key: 'minimaxApiKey' },
+      { key: 'minimaxBillingMode', secret: false, submitWithCredential: false },
+      { key: 'minimaxApiRegion', secret: false, submitWithCredential: false }
+    ]
+  },
   urlPolicy: [
     { hosts: ['platform.minimaxi.com'] },
     { hosts: ['platform.minimax.io'] }

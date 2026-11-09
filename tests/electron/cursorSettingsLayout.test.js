@@ -1243,21 +1243,21 @@ test('disabled credential providers settle account status instead of checking fo
   assert.match(copilotRenderBody, /copilotAccountStatusText\(provider, configured, source, enabled\)/);
 });
 
-test('MiniMax account saves go through the managed-account IPC with live validation', () => {
+test('DeepSeek managed accounts and MiniMax keys each save through their own IPC with live validation', () => {
   const app = readRendererFile('app.js');
   const main = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'electron', 'main.js'), 'utf8');
   const setupBody = functionBodyBeforeMarker(app, 'setupCursorAccountUI', '\nsetupCursorAccountUI();');
-  // 多账号流程：保存走共用 setupApiKeyAccountCard → 专用 IPC（main 端先
-  // 活体验证再入库），不再写单账号 settings key。
-  assert.match(setupBody, /setupApiKeyAccountCard\('minimax'/);
+  // dev 托管层（deepseek/zai）：保存走共用 setupApiKeyAccountCard → 专用
+  // IPC（main 端先活体验证再入库），不再写单账号 settings key。
+  assert.match(setupBody, /setupApiKeyAccountCard\('deepseek'/);
   const saveBody = functionBody(app, 'setupApiKeyAccountCard', 'renderCopilotStatus');
   assert.match(saveBody, /window\.tokenMonitor\[provider\]\.addAccount\(keyInput\.value, labelInput\?\.value \|\| ''\)/);
   assert.match(saveBody, /window\.tokenMonitor\[provider\]\.updateAccount\(editingId, keyInput\.value, labelInput\?\.value \|\| ''\)/);
   assert.match(saveBody, /result\?\.errorCode === 'invalidApiKey'/);
   assert.match(saveBody, /result\?\.errorCode === 'credentialStorageUnavailable'/);
-  assert.doesNotMatch(setupBody, /saveSettings\(\{ minimaxApiKey/);
-  // main 侧三家共用 apiKeyAccountControllers 工厂：活体验证先于持久化，
-  // 存入 settings 前剥离密钥本体。
+  assert.doesNotMatch(setupBody, /saveSettings\(\{ deepseekApiKey/);
+  // main 侧托管工厂（deepseek/zai）：活体验证先于持久化，存入 settings
+  // 前剥离密钥本体。
   const controllerBody = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'electron', 'apiKeyAccountControllers.js'), 'utf8');
   assert.match(controllerBody, /const validation = await validateAccount\(result\.account\);/);
   assert.ok(
@@ -1265,7 +1265,10 @@ test('MiniMax account saves go through the managed-account IPC with live validat
     'validation must happen before persistence'
   );
   assert.match(controllerBody, /delete result\.account\.apiKey/);
-  assert.match(main, /apiKeyAccountProviders = \{[\s\S]*minimax: \{ fetchLimits: fetchMinimaxLimits/);
+  assert.doesNotMatch(main, /apiKeyAccountProviders = \{[^}]*minimax:/);
+  // minimax 已退役托管层：多 key 面板走上游 createMinimaxApiKeys IPC。
+  assert.match(main, /const minimaxApiKeys = createMinimaxApiKeys\(/);
+  assert.match(main, /ipcMain\.handle\('minimax:getKeys'/);
 });
 
 test('MiMo account panel matches the manual Cookie provider layout', () => {

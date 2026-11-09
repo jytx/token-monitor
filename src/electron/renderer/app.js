@@ -6738,6 +6738,9 @@ function homeLimitRows() {
         : providerEntries.length;
       if (accountCount > 1) {
         const accountTitle = limitAccountTitle(id, provider, index, providerEntries);
+        // One MiniMax login can surface two related lanes (Code + API key);
+        // when the account resolver yields no title they stay on the provider name.
+        if (id === 'minimax' && !accountTitle) return providerTitle;
         return showProviderTitle ? `${providerTitle} · ${accountTitle}` : accountTitle;
       }
       if (id === 'mimo') {
