@@ -289,7 +289,16 @@ function readableColor(color) {
 }
 
 // The provider's own colour, as the Limits view resolves it.
+function pluginQuotaMetadata(id) {
+  return state.payload?.cells?.find(cell => cell.provider === id)?.pluginQuota
+    || state.payload?.cell?.pluginQuota
+    || state.payload?.summary?.items?.find(item => item.providerCell?.provider === id)?.providerCell.pluginQuota
+    || state.payload?.summary?.items?.find(item => item.provider === id || item.iconProvider === id)?.pluginQuota;
+}
+
 function limitProviderColor(id) {
+  const module = pluginQuotaMetadata(id);
+  if (module) return pluginViewsApi.presentationColor(module.presentation, clientColors);
   if (id === 'factory') return clientColors.droid;
   return clientColors[id] || clientColors.default;
 }
@@ -302,7 +311,7 @@ function providerColor(id) {
 }
 
 function providerLabel(id) {
-  return LIMIT_PROVIDER_LABELS[id] || CLIENT_LABELS[id] || id;
+  return pluginQuotaMetadata(id)?.label || LIMIT_PROVIDER_LABELS[id] || CLIENT_LABELS[id] || id;
 }
 
 function clientLabel(id) {
@@ -329,6 +338,8 @@ function hasMask(id) {
 
 function markNode(id, color, model = false) {
   const mark = el('span', 'edge-dock-mark');
+  const module = pluginQuotaMetadata(id);
+  if (module) { mark.classList.add('is-plugin'); mark.append(pluginViewsApi.navigationIcon(document, module, 14)); return mark; }
   if (hasMask(id)) mark.classList.add(`row-icon-${id}`);
   else mark.classList.add('is-fallback');
   if (model) mark.classList.add('model-icon');
@@ -515,7 +526,8 @@ function createCardWindowsView(cell = () => state.payload?.cell, forecast = () =
     codexAccounts,
     // Probed off the stylesheet the dock borrows, so the card can never disagree
     // with the page about which providers have a mark.
-    hasMark: hasMask,
+    pluginMark: id => { const module = pluginQuotaMetadata(id); return module ? pluginViewsApi.navigationIcon(document, module, 12) : null; },
+  hasMark: hasMask,
     formatAgo: relativeAgo,
     // The renderer names the intent; the main process owns the URL.
     openExternal: () => bridge.openResetForecastSource?.(),
@@ -1595,6 +1607,7 @@ function sessionsContainer(sessions, options = {}) {
     const age = relativeAgo(session.lastUsedAt || session.startedAt);
     description.append(sessionRowsApi.sessionModelMetadataNode(document, { ...session, modelLabel }, {
       translate: t, view: limitWindowsView,
+      latestModelLabel: t('session.latestModel'),
       unattributedLabel: t('dashboard.tooltip.unclassified'),
       formatTokens: formatBreakdownTokens
     }));
@@ -1920,67 +1933,11 @@ const stagingLayer = document.createElement('div');
 stagingLayer.className = 'edge-dock-staging';
 if (surface === 'bubble') root.append(stagingLayer);
 
-let cardSwitchMotion = null;
-
-function clearCardSwitch() {
-  const motion = cardSwitchMotion;
-  cardSwitchMotion = null;
-  if (!motion) return;
-  motion.incoming.cancel();
-  motion.outgoing.cancel();
-  motion.ghost.remove();
-}
-
-function captureCardSwitch(previous, sameCard, opening = false) {
-  if (surface !== 'bubble' || !previous || opening || prefersReducedMotion() || document.visibilityState === 'hidden') {
-    clearCardSwitch();
-    return null;
-  }
-  if (sameCard) {
-    if (!cardSwitchMotion) return null;
-    // A live reading can rebuild this card halfway through the switch. Carry
-    // the existing timeline onto its replacement instead of snapping/restarting.
-    cardSwitchMotion.elapsed = cardSwitchMotion.incoming.currentTime;
-    cardSwitchMotion.incoming.cancel();
-    return cardSwitchMotion;
-  }
-  if (cardSwitchMotion) {
-    // A rapid selection takes over immediately. Restarting from the partially
-    // transparent incoming card would discard the still-visible outgoing one.
-    clearCardSwitch();
-    return null;
-  }
-  const ghost = previous.cloneNode(true);
-  const opacity = getComputedStyle(previous).opacity;
-  const scrollTops = [...previous.querySelectorAll(CARD_SCROLL_SELECTOR)].map(list => list.scrollTop);
-  clearCardSwitch();
-  ghost.inert = true;
-  ghost.setAttribute('aria-hidden', 'true');
-  ghost.removeAttribute('id');
-  for (const node of ghost.querySelectorAll('[id]')) node.removeAttribute('id');
-  Object.assign(ghost.style, { position: 'absolute', top: '0', left: '0', pointerEvents: 'none' });
-  return { ghost, opacity, scrollTops, elapsed: 0 };
-}
-
-function animateCardSwitch(card, motion) {
-  if (!motion) return;
-  // Both readings travel together with the painted frame.
-  // Crossfade the content without scaling its text.
-  contentLayer.append(motion.ghost);
-  [...motion.ghost.querySelectorAll(CARD_SCROLL_SELECTOR)].forEach((list, index) => {
-    list.scrollTop = motion.scrollTops[index];
-  });
-  const timing = { duration: 160, easing: 'ease-in-out', fill: 'both' };
-  motion.incoming = card.animate([{ opacity: 0 }, { opacity: 1 }], timing);
-  motion.incoming.currentTime = motion.elapsed;
-  if (!motion.outgoing) {
-    motion.outgoing = motion.ghost.animate([{ opacity: motion.opacity }, { opacity: 0 }], timing);
-    motion.outgoing.finished.then(() => {
-      if (cardSwitchMotion === motion) clearCardSwitch();
-    }, () => {});
-  }
-  cardSwitchMotion = motion;
-}
+const cardSwitch = window.TokenMonitorCardSwitch.createCardSwitch({ contentLayer, scrollSelector: CARD_SCROLL_SELECTOR,
+  enabled: () => surface === 'bubble', reducedMotion: prefersReducedMotion });
+function clearCardSwitch() { cardSwitch.cancel(); }
+function captureCardSwitch(previous, sameCard, opening) { return cardSwitch.capture(previous, sameCard, opening); }
+function animateCardSwitch(card, motion) { cardSwitch.play(card, motion); }
 
 function commitCard(card, cellId) {
   const previous = contentLayer.querySelector('.edge-dock-card');
