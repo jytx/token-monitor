@@ -116,6 +116,7 @@ const LIMIT_PROVIDER_CONNECTION_DETAIL_KEYS = {
   grok: 'settings.limits.connection.grok',
   kiro: 'settings.limits.connection.kiro',
   manus: 'settings.limits.connection.manus',
+  hark: 'settings.limits.connection.hark',
   muse: 'settings.limits.connection.muse',
   workbuddy: 'settings.limits.connection.workbuddy'
 };
@@ -6778,6 +6779,7 @@ function homeLimitWindowLabel(window, providerId = '', visibleWindows = []) {
   if (compactLabel) return compactLabel;
   if (window?.kind === 'billing') {
     const label = String(window?.label || '').trim();
+    if (providerId === 'cursor' && label === 'Included usage') return t('home.limit.monthly');
     if (label) return label;
   }
   const key = {
@@ -7456,7 +7458,9 @@ function renderHomeTrendsModule() {
   const preview = state.stats?.historyPreview || { daily: [] };
   const history = homeOverviewApi.pickHomeHistory(state.homeHistory, preview);
   const rawDaily = history.daily || [];
-  if (!historyEnabled || rawDaily.length === 0) {
+  const summary = state.stats?.historyPreview?.summary;
+  const hasLifetimeActivity = summary?.activeDaysComplete === true && summary.activeDays > 0;
+  if (!historyEnabled || (rawDaily.length === 0 && !hasLifetimeActivity)) {
     const { module, body } = homeModuleShell('trends', t('home.activity'), 'trends');
     const empty = document.createElement('div');
     empty.className = 'home-module-empty';
@@ -7502,14 +7506,16 @@ function renderHomeTrendsModule() {
     cell: activityLayout.cell,
     gap: activityLayout.gap
   });
-  const summaryActiveDays = state.stats?.historyPreview?.summary?.activeDays;
-  const activeDaysWindow = state.settings?.homeActiveDaysWindow || 'all';
-  const displayActiveDays = activeDaysWindow === 'year'
-    ? activity.cells.filter((cell) => cell.tokens > 0).length
-    : (Number.isFinite(summaryActiveDays)
-        ? summaryActiveDays
-        : activity.cells.filter((cell) => cell.tokens > 0).length);
-  const activeDaysLabel = activeDaysWindow === 'year'
+  const activeDaysPresentation = homeOverviewApi.homeActiveDaysPresentation({
+    requestedWindow: state.settings?.homeActiveDaysWindow || 'all',
+    summary,
+    cells: activity.cells,
+    rollingComplete: state.homeHistory != null
+      && state.homeHistoryLoadedSignature === homeOverviewApi.homeHistorySignature(state.stats)
+  });
+  const activeDaysWindow = activeDaysPresentation.window;
+  const displayActiveDays = activeDaysPresentation.count;
+  const activeDaysLabel = displayActiveDays == null ? '' : activeDaysWindow === 'year'
     ? t('home.activeDaysYear', { count: displayActiveDays })
     : t('home.activeDays', { count: displayActiveDays });
   const { module, body } = homeModuleShell('trends', t('home.activity'), 'trends', activeDaysLabel);
@@ -10004,7 +10010,7 @@ function syncSettingsForm() {
         ? String(allowed.includes(value) ? value : 300000)
         : 'live';
   }
-  if (els.wslScanInput) els.wslScanInput.checked = state.settings.wslScanEnabled !== false;
+  if (els.wslScanInput) els.wslScanInput.checked = state.settings.wslScanEnabled === true;
   if (els.sessionUsageArchiveInput) els.sessionUsageArchiveInput.checked = state.settings.sessionUsageArchiveEnabled !== false;
   renderAutomaticAppUpdateControl();
   allTimeSessions.ensure();
@@ -17988,7 +17994,8 @@ function renderExternalProviderStatus(providerName) {
     openBtn.classList.remove('hidden');
   }
   const discoveredLogin = (providerName === 'zai' && source === 'zcode-auto')
-    || (providerName === 'cline' && source === 'cline-signin');
+    || (providerName === 'cline' && source === 'cline-signin')
+    || providerName === 'hark';
   if (discoveredLogin) {
     // The discovered login is not user-entered, so the override input and the
     // console link stay reachable instead of hiding behind linked. Cline's stored

@@ -377,6 +377,7 @@ const { projectLimitStatsForDisplay } = require('./limits/statsPresentation');
 const { DEFAULT_WIDGET_KIND, requestMacWidgetReload, resetMacWidgetReloadThrottle } = require('./macWidget/reloader');
 const { WIDGET_DEMAND_MARKER, WIDGET_DEMAND_PROVISIONAL_MARKER, createMacWidgetDemandState } = require('./macWidget/demand');
 const linuxAutostart = require('./linuxAutostart');
+const { canPositionWindow } = require('./linuxDisplayServer');
 const { codexAccountIdForProvider, localLiveCodexProvider } = require('./renderer/accountIdentity');
 const {
   buildTrayIcon,
@@ -622,7 +623,6 @@ const recoverMacWidgetLaunchServicesRegistration = createMacWidgetLaunchServices
 
 app.setName(APP_NAME);
 if (process.platform === 'win32') app.setAppUserModelId('com.javis.tokenmonitor');
-
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) app.exit(0);
 
@@ -773,7 +773,7 @@ function defaultSettings() {
     historyEnabled: true,
     historyIntervalMs: normalizeHistoryIntervalMs(process.env.TOKEN_MONITOR_HISTORY_INTERVAL_MS),
     sessionUsageArchiveEnabled: parseBoolean(process.env.TOKEN_MONITOR_SESSION_USAGE_ARCHIVE_ENABLED, true),
-    wslScanEnabled: parseBoolean(process.env.TOKEN_MONITOR_WSL_SCAN, true),
+    wslScanEnabled: parseBoolean(process.env.TOKEN_MONITOR_WSL_SCAN, false),
     exportAutoEnabled: false,
     exportDir: '',
     exportIntervalMs: 60 * 1000,
@@ -2283,6 +2283,7 @@ function normalizeLanguageSetting(value, fallback = 'auto') {
   if (lower === 'zh-tw' || lower.startsWith('zh-hant') || /-(tw|hk|mo)\b/i.test(raw)) return 'zh-TW';
   if (lower === 'zh-cn' || lower.startsWith('zh-hans') || /-(cn|sg|my)\b/i.test(raw)) return 'zh-CN';
   if (lower === 'pt' || lower.startsWith('pt-')) return 'pt-BR';
+  if (lower === 'es' || lower.startsWith('es-')) return 'es';
   return LANGUAGE_VALUES.has(raw) ? raw : fallback;
 }
 
@@ -2613,6 +2614,10 @@ function persistBoundsSoon() {
         previousBubble.height === next.height) return;
       settings.floatingBubbleBounds = next;
     } else {
+      if (!canPositionWindow()) {
+        next.x = prev.x;
+        next.y = prev.y;
+      }
       if (prev.x === next.x && prev.y === next.y && prev.width === next.width && prev.height === next.height) return;
       settings.windowBounds = next;
     }
@@ -2876,7 +2881,7 @@ function readSettings() {
       merged.sessionUsageArchiveEnabled = parseBoolean(saved.sessionUsageArchiveEnabled, true);
     }
     if (saved.wslScanEnabled !== undefined) {
-      merged.wslScanEnabled = parseBoolean(saved.wslScanEnabled, true);
+      merged.wslScanEnabled = parseBoolean(saved.wslScanEnabled, false);
     }
     merged.codexDotsEnabled = parseBoolean(merged.codexDotsEnabled, false);
     merged.codexDotsVisible = parseBoolean(merged.codexDotsVisible, true);
@@ -6157,6 +6162,7 @@ function edgeDockAppearance(rendererSettings = settingsForRenderer()) {
 const EDGE_DOCK_RATE_ACTIVE_MS = 8000;
 const EDGE_DOCK_RATE_CLEAR_MS = 3 * 60 * 1000;
 let edgeDockRateTracker = null;
+const edgeDockRateHistory = tokenRateApi.createLiveTokenRateHistory();
 let edgeDockRateContext = '';
 let edgeDockRateTimer = null;
 
@@ -6182,6 +6188,7 @@ function edgeDockLiveRateSample(visibleStats) {
   edgeDockRateTimer = null;
   if (!edgeDockShowsLiveRate()) {
     edgeDockRateTracker = null;
+    edgeDockRateHistory.reset();
     edgeDockRateContext = '';
     return null;
   }
@@ -6189,7 +6196,7 @@ function edgeDockLiveRateSample(visibleStats) {
   const syncMode = tokenRateApi.isSharedSyncMode(hubMode);
   const scope = syncMode && settings?.liveTokenRateScope !== 'device' ? 'all' : 'device';
   const selection = tokenRateApi.selectLiveTokenRatePeriods(visibleStats, settings?.deviceId, hubMode, scope);
-  const context = [mode, hubMode || '', settings?.hubUrl || '', settings?.deviceId || '', scope, selection.source].join('|');
+  const context = [mode, hubMode || '', settings?.hubUrl || '', settings?.deviceId || '', settings?.clients || '', scope, selection.source].join('|');
   if (!edgeDockRateTracker) {
     edgeDockRateTracker = tokenRateApi.createLiveTokenRateGroupTracker({
       // Expiry timers subtract Date.now(), so samples must use epoch time too.
@@ -6203,12 +6210,19 @@ function edgeDockLiveRateSample(visibleStats) {
   if (context !== edgeDockRateContext) {
     edgeDockRateContext = context;
     edgeDockRateTracker.reset(selection.entries);
+    edgeDockRateHistory.reset();
   } else {
-    edgeDockRateTracker.observe(selection.entries);
+    const result = edgeDockRateTracker.observe(selection.entries);
+    if (result.changed && !result.sample) edgeDockRateHistory.reset();
+    // Only the side dock's speed card draws history. The Notch and sessions
+    // readouts share the live sample but do not create a chart demand.
+    const historyEnabled = settings?.edgeDockEnabled !== false && settings?.edgeDockItems?.some(item => item.type === 'stat' && item.metric === 'liveRate');
+    if (historyEnabled) edgeDockRateHistory.observe(result.sample);
+    else edgeDockRateHistory.reset();
   }
   // A sample goes idle and then clears without any new push; re-project then.
-  const expiresAt = edgeDockRateTracker.nextExpiryAt();
-  if (expiresAt) {
+  const expiresAt = Math.min(...[edgeDockRateTracker.nextExpiryAt(), edgeDockRateHistory.nextExpiryAt()].filter(Boolean));
+  if (Number.isFinite(expiresAt)) {
     edgeDockRateTimer = setTimeout(() => {
       edgeDockRateTimer = null;
       repaintDockSurfaces();
@@ -6352,6 +6366,7 @@ function edgeDockCellsFor(visibleStats, items = settings?.edgeDockItems, options
     limitProviders: settings?.limitProviders,
     limitProviderOrder: settings?.limitProviderOrder,
     liveRate: edgeDockLiveRateSample(visibleStats),
+    liveRateHistory: edgeDockRateHistory.getSamples(),
     tokenRateMode: settings?.tokenRateMode
   });
 }
@@ -6522,6 +6537,9 @@ function syncDockSurfaces(rendererSettings) {
     if (!notchController?.isRunning()) {
       if (edgeDockRateTimer) clearTimeout(edgeDockRateTimer);
       edgeDockRateTimer = null;
+      edgeDockRateTracker = null;
+      edgeDockRateContext = '';
+      edgeDockRateHistory.reset();
     }
     syncPluginQuotaSurfaceDemand();
     return;
@@ -7907,8 +7925,8 @@ function createWindow(boundsOverride, options = {}) {
     }
     else if (!quitRequested) scheduleFloatingBubbleAutoCollapse();
   });
-  win.on('resized', () => { persistBoundsSoon(); syncTaskbarZOrder(); });
-  win.on('moved', () => { persistBoundsSoon(); syncTaskbarZOrder(); });
+  const onBoundsChange = () => { persistBoundsSoon(); syncTaskbarZOrder(); };
+  for (const eventName of ['resize', 'resized', 'move', 'moved']) win.on(eventName, onBoundsChange);
   win.on('show', syncTaskbarZOrder);
   win.on('restore', syncTaskbarZOrder);
   win.on('hide', stopTaskbarZOrderKeeper);
@@ -8415,6 +8433,8 @@ app.whenReady().then(() => {
     const previousProxyKey = JSON.stringify([settings.proxyUrl || '', settings.noProxy || '']);
     const normalizedCurrency = patch.currency !== undefined ? normalizeCurrency(patch.currency, settings.currency) : normalizeCurrency(settings.currency);
     const normalizedPatch = { ...patch, currency: normalizedCurrency };
+    // Only Cursor's explicit account lifecycle can assign manual ownership.
+    delete normalizedPatch.cursorManualAccountIds;
     delete normalizedPatch.windowMaximized;
     delete normalizedPatch.workbuddyEndpoint;
     delete normalizedPatch.workbuddyLocalAppEnabled;
@@ -8602,7 +8622,7 @@ app.whenReady().then(() => {
       projectBreakdownMode: normalizeProjectBreakdownMode(patch.projectBreakdownMode ?? settings.projectBreakdownMode),
       historyIntervalMs: normalizeHistoryIntervalMs(patch.historyIntervalMs ?? settings.historyIntervalMs),
       sessionUsageArchiveEnabled: parseBoolean(patch.sessionUsageArchiveEnabled ?? settings.sessionUsageArchiveEnabled, true),
-      wslScanEnabled: parseBoolean(patch.wslScanEnabled ?? settings.wslScanEnabled, true),
+      wslScanEnabled: parseBoolean(patch.wslScanEnabled ?? settings.wslScanEnabled, false),
       collectionMode: normalizeCollectionMode(patch.collectionMode ?? settings.collectionMode),
       collectionIntervalMs: normalizeCollectionIntervalMs(patch.collectionIntervalMs ?? settings.collectionIntervalMs),
       syncUploadIntervalMs: normalizeSyncUploadIntervalMs(patch.syncUploadIntervalMs ?? settings.syncUploadIntervalMs),
@@ -9140,16 +9160,13 @@ app.whenReady().then(() => {
       const accountId = await cursorAuth.runCursorLogin(token);
       const disabled = normalizeCursorDisabledAccountIds(settings.cursorDisabledAccountIds)
         .filter((id) => id !== accountId);
-      const limitsChanged = disabled.length !== settings.cursorDisabledAccountIds.length;
       settings.cursorDisabledAccountIds = disabled;
       settings.cursorManualAccountIds = normalizeCursorAccountIds([
         ...settings.cursorManualAccountIds,
         accountId
       ]);
       saveSettings({ throwOnError: true });
-      if (limitsChanged) {
-        deviceRuntimeHandle?.reconfigureLimits(electronLimitsConfig());
-      }
+      deviceRuntimeHandle?.reconfigureLimits(electronLimitsConfig());
       cursorStatusCache = { value: null, at: 0 };
       void queueLimitInvalidation({ provider: 'cursor' }, 'login', { clear: true });
       bestEffortTrackedUsageRefresh('cursor', { forceSync: true });
@@ -9243,13 +9260,10 @@ app.whenReady().then(() => {
       await cursorAuth.runCursorLogout({ accountId: removeId });
       const disabled = normalizeCursorDisabledAccountIds(settings.cursorDisabledAccountIds)
         .filter((id) => id !== removeId);
-      const limitsChanged = disabled.length !== settings.cursorDisabledAccountIds.length;
       settings.cursorDisabledAccountIds = disabled;
       settings.cursorManualAccountIds = [...manual].filter((id) => id !== removeId);
       saveSettings({ throwOnError: true });
-      if (limitsChanged) {
-        deviceRuntimeHandle?.reconfigureLimits(electronLimitsConfig());
-      }
+      deviceRuntimeHandle?.reconfigureLimits(electronLimitsConfig());
       cursorStatusCache = { value: null, at: 0 };
       void queueLimitInvalidation({ provider: 'cursor' }, 'logout', { clear: true });
       bestEffortTrackedUsageRefresh('cursor', { forceSync: true });

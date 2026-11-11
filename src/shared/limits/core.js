@@ -636,9 +636,11 @@ function isConfiguredProvider(provider) {
 // 同步设备的不同凭据身份须分开保留，显示邮箱相同并不代表同一身份。
 // notion 的配额按用户+工作区生效，其复合键可跨端移植，既不能按 provider
 // 折叠也不能按邮箱折叠。manus 的键是会话用户 id 的哈希，同一账号在所有
-// 设备上哈希一致，可跨端分行。opendesign 的工作区 ID 可跨设备移植，同
-// 一工作区在所有设备上分行一致。其余供应商折叠为单行（同名择优）。
-const MULTI_ACCOUNT_PROVIDER_IDS = new Set(['claude', 'codex', 'opencode', 'openrouter', 'thirdparty', 'mimo', 'minimax', 'deepseek', 'zai', 'cursor', 'cline', 'volcengine', 'alibaba', 'notion', 'manus', 'opendesign']);
+// 设备上哈希一致，可跨端分行。hark 的键是解码后会话令牌的哈希，同一
+// cookie 在所有设备上匹配，第二个 cookie 即另一个会话。opendesign 的
+// 工作区 ID 可跨设备移植，同一工作区在所有设备上分行一致。其余供应商
+// 折叠为单行（同名择优）。
+const MULTI_ACCOUNT_PROVIDER_IDS = new Set(['claude', 'codex', 'opencode', 'openrouter', 'thirdparty', 'mimo', 'minimax', 'deepseek', 'zai', 'cursor', 'cline', 'volcengine', 'alibaba', 'notion', 'manus', 'hark', 'opendesign']);
 
 function providerCollapseKey(provider) {
   // Known WorkBuddy and MiniMax identities survive missing credentials and
