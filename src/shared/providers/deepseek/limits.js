@@ -16,6 +16,7 @@ const path = require('node:path');
 const { recordConsumption } = require('./balanceHistory');
 const { sharedDataDir } = require('../../config');
 const { normalizeLimitProvider } = require('../../limits/core');
+const { hashKey } = require('../../hashKey');
 const {
   apiKeyAccountDisplayLabel,
   cleanApiKeySecret,
@@ -23,14 +24,18 @@ const {
   scopedApiKeyManagedAccounts
 } = require('../../apiKeyAccounts');
 const {
+  cleanSecret,
   errorWithStatus,
   fetchJson,
   nowIso,
+  numberOrNull,
   providerStatusFromError
 } = require('../../limits/providerHelpers');
 
 const DEEPSEEK_BALANCE_URL = 'https://api.deepseek.com/user/balance';
 const DEEPSEEK_KEY_NAMES = ['DEEPSEEK_API_KEY', 'DEEPSEEK_KEY'];
+// Private console endpoint: needs a signed-in session token, read for the current month only.
+const DEEPSEEK_CONSOLE_COST_URL = 'https://platform.deepseek.com/api/v0/usage/by_api_key/cost';
 
 function deepseekToken(env = process.env, explicitKey = '') {
   const explicit = cleanApiKeySecret(explicitKey);
@@ -75,10 +80,60 @@ function deepseekStatusProvider(status, updatedAt, account) {
   });
 }
 
+// Accept a bare or pasted Authorization token; reject anything that is not one.
+function normalizeDeepseekWebToken(value) {
+  const raw = cleanSecret(value).replace(/^authorization\s*:\s*/iu, '').replace(/^bearer\s+/iu, '').trim();
+  return /[\u0000-\u001f\u007f;\s]/u.test(raw) ? '' : raw;
+}
+
+const CONSOLE_TOOL_NAMES = {
+  searchSpend: ['server-tool-search', 'tool-search'],
+  fetchSpend: ['server-tool-fetch', 'tool-fetch']
+};
+
+async function fetchToolSpends(token, { accountKey, currency, now }, deps) {
+  if (!token || deps.probe) return null;
+  const date = new Date(now);
+  const tz = -date.getTimezoneOffset() * 60;
+  // Both boundaries use one fixed console offset, including across DST changes.
+  const window = {
+    start: Date.UTC(date.getFullYear(), date.getMonth(), 1) / 1000 - tz,
+    end: Date.UTC(date.getFullYear(), date.getMonth(), date.getDate() + 1) / 1000 - tz,
+    tz
+  };
+  const state = deps.providerRuntimeState instanceof Map ? deps.providerRuntimeState : null;
+  const cacheKey = hashKey('deepseek-console', accountKey, token, currency);
+  const cached = state?.get(cacheKey);
+  if (cached?.start === window.start && cached.expiresAt > now) return cached.toolSpends;
+  try {
+    const body = await fetchJson(`${DEEPSEEK_CONSOLE_COST_URL}?${new URLSearchParams(window)}`, { Authorization: `Bearer ${token}` }, deps);
+    const data = body?.data?.biz_data;
+    if (body?.code !== 0 || body?.data?.biz_code !== 0 || data?.start !== window.start || data?.end !== window.end) return null;
+    const row = (data.data || []).find((item) => String(item?.currency || '').toUpperCase() === currency);
+    const lists = [row?.series, row?.function_series].filter(Array.isArray);
+    if (!lists.length) return null;
+    const list = lists.flat();
+    const toolSpends = {};
+    for (const [key, names] of Object.entries(CONSOLE_TOOL_NAMES)) {
+      const costs = list.filter((item) => names.includes(item?.model))
+        .flatMap((item) => item.buckets.map((bucket) => numberOrNull(bucket?.cost)));
+      if (costs.includes(null)) return null;
+      const total = costs.reduce((sum, cost) => sum + cost, 0);
+      if (total > 0) toolSpends[key] = total;
+    }
+    state?.set(cacheKey, { start: window.start, expiresAt: now + 60 * 60_000, toolSpends });
+    return toolSpends;
+  } catch {
+    // Optional console failures leave the balance intact and retry next refresh.
+    return null;
+  }
+}
+
 // 探测单个 DeepSeek 密钥。account 为 null 表示单账号兼容路径（旧
 // settings.deepseekApiKey 或 env 密钥），保持历史行为——错误行不带账号
-// 身份、标签为 'Pay-as-you-go' 套餐名。
-async function probeDeepSeekAccountKey(key, account, deps) {
+// 身份、标签为 'Pay-as-you-go' 套餐名。webToken 为 provider 级 console
+// 会话令牌（可选），非空时给余额行附加当月 Search/Fetch 花费。
+async function probeDeepSeekAccountKey(key, account, deps, webToken) {
   const now = (deps.now || Date.now)();
   try {
     // 共享 fetchJson 的默认映射与 DeepSeek 预期一致：401 → unauthorized，
@@ -99,6 +154,7 @@ async function probeDeepSeekAccountKey(key, account, deps) {
       { accountKey, currency: row.currency, paid: row.paid, now, storePath, legacyStorePath },
       deps
     );
+    const toolSpends = await fetchToolSpends(webToken, { accountKey, currency: row.currency, now }, deps);
     return normalizeLimitProvider({
       provider: 'deepseek',
       accountKey,
@@ -125,7 +181,8 @@ async function probeDeepSeekAccountKey(key, account, deps) {
         monthSpend: spend.monthSpend,
         allTimeSpend: spend.allTimeSpend,
         trackingSince: spend.trackingSince,
-        monthSinceTracking: spend.monthSinceTracking
+        monthSinceTracking: spend.monthSinceTracking,
+        ...(toolSpends || {})
       }
     });
   } catch (error) {
@@ -135,13 +192,16 @@ async function probeDeepSeekAccountKey(key, account, deps) {
 
 async function fetchDeepSeekLimits(options = {}, deps = {}) {
   const env = deps.env || process.env;
+  // Console webToken 是 provider 级可选凭据，对每个账号的余额行
+  // 附加同一会话下的当月 Search/Fetch 花费。
+  const webToken = normalizeDeepseekWebToken(options.deepseekWebToken);
   const scope = options.limitRefreshScope?.provider === 'deepseek'
     ? options.limitRefreshScope
     : null;
   const accounts = scopedApiKeyManagedAccounts('deepseek', options.deepseekManagedAccounts, scope);
   if (accounts.length > 0) {
     return Promise.all(accounts.map(
-      (account) => probeDeepSeekAccountKey(account.apiKey, account, deps)
+      (account) => probeDeepSeekAccountKey(account.apiKey, account, deps, webToken)
     ));
   }
   // 单账号兼容路径：GUI 迁移前的 settings.deepseekApiKey 或 env 密钥
@@ -150,7 +210,7 @@ async function fetchDeepSeekLimits(options = {}, deps = {}) {
   if (!key) {
     return deepseekStatusProvider('notConfigured', nowIso((deps.now || Date.now)()), null);
   }
-  return probeDeepSeekAccountKey(key, null, deps);
+  return probeDeepSeekAccountKey(key, null, deps, webToken);
 }
 
 module.exports = {
@@ -158,6 +218,7 @@ module.exports = {
   DEEPSEEK_KEY_NAMES,
   deepseekToken,
   fetchDeepSeekLimits,
+  normalizeDeepseekWebToken,
   probeDeepSeekAccountKey,
   selectFundedRow
 };

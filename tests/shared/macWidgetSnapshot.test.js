@@ -349,12 +349,23 @@ test('merges model display-name collisions before calculating shares', () => {
   assert.match(snapshot.periods.day.models[0].id, /^model-/);
 });
 
+test('preserves KRW provider balances independently of the selected display currency', () => {
+  const snapshot = buildSnapshot({
+    limits: { providers: [
+      { provider: 'deepseek', status: 'ok', balance: { amount: 1380.25, currency: ' krw ' }, windows: [] }
+    ] }
+  }, { now: NOW, presentation: { currencyCode: 'USD' } });
+
+  assert.equal(snapshot.presentation.currencyCode, 'USD');
+  assert.deepEqual(snapshot.quota[0].balance, { amount: 1380.25, currency: 'KRW' });
+});
+
 test('preserves a zero balance and omits missing, non-finite, or unsupported balances', () => {
   const snapshot = buildSnapshot({
     limits: { providers: [
       { provider: 'deepseek', status: 'ok', balance: { amount: '0', currency: ' cny ' } },
       { provider: 'mimo', status: 'ok', balance: { amount: Infinity, currency: 'CNY' } },
-      { provider: 'cursor', status: 'ok', balance: { amount: 4.5, currency: 'EUR' } },
+      { provider: 'cursor', status: 'ok', balance: { amount: 4.5, currency: 'ZAR' } },
       { provider: 'claude', status: 'ok', balance: { amount: 2.5 } },
       { provider: 'codex', status: 'ok' }
     ] }
@@ -937,5 +948,17 @@ test('Cursor widget quota labels follow the included period without renaming sto
     }] } }, { now: NOW });
     assert.equal(snapshot.quota[0].windows[0].label, label);
     assert.equal(window.label, 'Included usage');
+  }
+});
+
+test('all display currencies retain their symbol and provider balance in widget snapshots', () => {
+  const { CURRENCY_RATES } = require('../../src/shared/currency');
+  for (const [code, entry] of Object.entries(CURRENCY_RATES)) {
+    const snapshot = buildSnapshot({
+      limits: { providers: [{ provider: 'deepseek', status: 'ok', balance: { amount: 12.25, currency: code }, windows: [] }] }
+    }, { now: NOW, presentation: { currencyCode: code, currencyRate: entry.rate } });
+    assert.equal(snapshot.presentation.currencyCode, code);
+    assert.equal(snapshot.presentation.currencySymbol, entry.symbol);
+    assert.deepEqual(snapshot.quota[0].balance, { amount: 12.25, currency: code });
   }
 });

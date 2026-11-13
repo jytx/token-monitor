@@ -34,7 +34,7 @@ const codexAccountControlApi = window.TokenMonitorCodexAccountControl;
 const { activateOnPress } = window.TokenMonitorPressActivation;
 const { clientColors, modelColor, modelVendorFor } = window.TokenMonitorUsageCharts;
 const { UNATTRIBUTED_KEY } = window.TokenMonitorUsageAttributionRows;
-const { LIMIT_PROVIDER_LABELS } = window.TokenMonitorLimitProviders;
+const { LIMIT_PROVIDER_IDS, LIMIT_PROVIDER_LABELS } = window.TokenMonitorLimitProviders;
 const { CLIENT_LABELS } = window.TokenMonitorClientCatalog;
 // The same predicate the Sessions list uses. The card repaints from its last
 // payload on a timer, so whether a session is still running has to be answered
@@ -552,10 +552,31 @@ function createCardWindowsView(cell = () => state.payload?.cell, forecast = () =
     // compares the plan's price against. It rides the cell because it changes with
     // every stats push, while the appearance is only re-pushed on a settings edit.
     monthClientCosts: () => cell()?.monthClientCosts,
-    resetForecast: () => ({ busy: false, forecast: forecast() })
+    resetForecast: () => ({ busy: false, forecast: forecast() }),
+    // The same row button as the Limits page. Only the card's bridge carries it
+    // (a surface without it draws none), and only built-in providers reach the
+    // limits runtime; plugin quotas refresh through their own plugin.
+    accountRefresh: {
+      available: (provider) => typeof bridge.refreshLimitAccount === 'function'
+        && LIMIT_PROVIDER_IDS.includes(provider?.provider),
+      probes: () => limitProbes,
+      refresh: (provider) => bridge.refreshLimitAccount(provider.provider, {
+        accountKey: provider.accountKey,
+        accountEmail: provider.accountEmail,
+        accountName: provider.accountName,
+        accountLabel: provider.accountLabel,
+        sourceDetail: provider.sourceDetail
+      })
+    }
   });
 }
+// Probes the limits runtime is running right now, whoever started them.
+let limitProbes = [];
 const limitWindowsView = createCardWindowsView();
+bridge.onLimitProbes?.((probes) => {
+  limitProbes = Array.isArray(probes) ? probes : [];
+  limitWindowsView.syncLimitRefreshButtons();
+});
 
 // ---- Silhouette -------------------------------------------------------------
 
@@ -903,16 +924,15 @@ function statLabel(metric) {
 // user sees 萬/億 here too, never 億 beside K.
 function formatRailCost(value, unpricedTokens) {
   if (unpricedTokens > 0) return '—';
-  const code = appearance().currency || 'USD';
+  const code = currencyApi.normalizeCurrency(appearance().currency);
   const amount = Math.abs(currencyApi.convertUsd(value, code));
   if (amount >= 10_000) {
     return compactMoneyApi.formatCompactCurrencyFromUsd(
       Math.abs(value), code, appearance().compactTokenUnits, state.locale
     );
   }
-  const full = currencyApi.formatCurrencyFromUsd(value, code);
-  const symbol = full.replace(/[\d.,\s-]+$/, '');
-  const digits = amount >= 100 ? 0 : amount >= 10 ? 1 : 2;
+  const symbol = currencyApi.CURRENCY_RATES[code].symbol;
+  const digits = Math.min(currencyApi.currencyFractionDigits(code), amount >= 100 ? 0 : amount >= 10 ? 1 : 2);
   return `${symbol}${amount.toFixed(digits)}`;
 }
 

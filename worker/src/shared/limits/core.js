@@ -245,6 +245,8 @@ function normalizeProviderBalance(input) {
   const weekSpend = numberOrNull(input.weekSpend ?? input.week_spend);
   const monthSpend = numberOrNull(input.monthSpend ?? input.month_spend);
   const allTimeSpend = numberOrNull(input.allTimeSpend ?? input.all_time_spend);
+  const searchSpend = numberOrNull(input.searchSpend ?? input.search_spend);
+  const fetchSpend = numberOrNull(input.fetchSpend ?? input.fetch_spend);
   const requestCountRaw = numberOrNull(input.requestCount ?? input.request_count);
   const requestCount = requestCountRaw === null ? null : Math.max(0, Math.trunc(requestCountRaw));
   const quotaGroup = String(input.quotaGroup ?? input.quota_group ?? '').trim().slice(0, 64);
@@ -272,6 +274,8 @@ function normalizeProviderBalance(input) {
     && weekSpend === null
     && monthSpend === null
     && allTimeSpend === null
+    && searchSpend === null
+    && fetchSpend === null
     && requestCount === null
     && !quotaGroup
     && !expiresAt
@@ -297,6 +301,8 @@ function normalizeProviderBalance(input) {
     weekSpend,
     monthSpend,
     allTimeSpend,
+    ...(searchSpend !== null ? { searchSpend } : {}),
+    ...(fetchSpend !== null ? { fetchSpend } : {}),
     requestCount,
     quotaGroup,
     expiresAt,
@@ -639,9 +645,11 @@ function isConfiguredProvider(provider) {
 // 同步设备的不同凭据身份须分开保留，显示邮箱相同并不代表同一身份。
 // notion 的配额按用户+工作区生效，其复合键可跨端移植，既不能按 provider
 // 折叠也不能按邮箱折叠。manus 的键是会话用户 id 的哈希，同一账号在所有
-// 设备上哈希一致，可跨端分行。opendesign 的工作区 ID 可跨设备移植，同
-// 一工作区在所有设备上分行一致。其余供应商折叠为单行（同名择优）。
-const MULTI_ACCOUNT_PROVIDER_IDS = new Set(['claude', 'codex', 'opencode', 'openrouter', 'thirdparty', 'mimo', 'minimax', 'deepseek', 'zai', 'cursor', 'cline', 'volcengine', 'alibaba', 'notion', 'manus', 'opendesign']);
+// 设备上哈希一致，可跨端分行。hark 的键是解码后会话令牌的哈希，同一
+// cookie 在所有设备上匹配，第二个 cookie 即另一个会话。opendesign 的
+// 工作区 ID 可跨设备移植，同一工作区在所有设备上分行一致。其余供应商
+// 折叠为单行（同名择优）。
+const MULTI_ACCOUNT_PROVIDER_IDS = new Set(['claude', 'codex', 'opencode', 'openrouter', 'thirdparty', 'mimo', 'minimax', 'deepseek', 'zai', 'cursor', 'cline', 'volcengine', 'alibaba', 'notion', 'manus', 'hark', 'opendesign']);
 
 function providerCollapseKey(provider) {
   // Known WorkBuddy and MiniMax identities survive missing credentials and
@@ -1103,7 +1111,7 @@ function publicLimits(limits) {
       if (!provider.balance) return provider;
       // `tranches` carries per-grant amounts and expiry dates — billing detail
       // with no public value, dropped alongside the custom group label.
-      const { quotaGroup, tranches, ...publicBalance } = provider.balance;
+      const { quotaGroup, tranches, searchSpend, fetchSpend, ...publicBalance } = provider.balance;
       return { ...provider, balance: publicBalance };
     })
   };
