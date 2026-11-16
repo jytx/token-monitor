@@ -20,6 +20,7 @@ const MINIMAX_MANAGED_MIGRATION_VERSION = 1;
 const CREDENTIAL_SETTING_PATHS = Object.freeze({
   hubHostSecret: ['hub', 'hostSecret'],
   secret: ['hub', 'clientSecret'],
+  hubProfiles: ['hub', 'profiles'],
   ...providerCredentialSettingPaths()
 });
 

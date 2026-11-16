@@ -1,7 +1,8 @@
+// @ts-check
 'use strict';
 
 // Account declarations must remain require-free for renderer-safe projection.
-module.exports = {
+module.exports = /** @satisfies {import('../../limits/accounts').AccountDeclaration} */ ({
   id: 'minimax',
   fetch: 'fetchMinimaxLimits',
   accountRefresh: true,
@@ -51,7 +52,7 @@ module.exports = {
     const accounts = limits.configuredMinimaxAccounts(settings, { env });
     return {
       minimaxApiKeyConfigured: accounts.length > 0,
-      minimaxApiKeySource: accounts.some(account => account.name !== 'environment') ? 'settings' : accounts.length ? 'env' : ''
+      minimaxApiKeySource: accounts.some(/** @param {{name: string}} account */ account => account.name !== 'environment') ? 'settings' : accounts.length ? 'env' : ''
     };
   },
   form: {
@@ -66,4 +67,4 @@ module.exports = {
     { hosts: ['platform.minimaxi.com'] },
     { hosts: ['platform.minimax.io'] }
   ]
-};
+});
