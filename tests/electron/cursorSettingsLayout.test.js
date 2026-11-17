@@ -762,27 +762,22 @@ test('Codex system account switching is exposed from limits account rows', () =>
   assert.doesNotMatch(renderLimits, /codexSwitchPopoverRenderPending/);
 });
 
-test('DeepSeek keeps the dev managed-account panel and MiniMax keys use the shared account shell', () => {
+test('DeepSeek retires the dev managed-account panel and MiniMax keys use the shared account shell', () => {
   const html = readRendererFile('index.html');
-  const details = html.match(/<div id="deepseekSettingsDetails"[\s\S]*?<div id="deepseekErrorMessage" class="settings-note error hidden"><\/div>/)?.[0] || '';
-  assert.match(details, /<div id="deepseekAccountList" class="managed-account-list">/);
-  assert.match(details, /<button id="deepseekAddToggle"[\s\S]*aria-controls="deepseekAddDetails"/);
-  assert.match(details, /<button id="deepseekOpenBrowser"[\s\S]*data-i18n="settings\.deepseek\.openBrowser">/);
-  assert.match(details, /<input id="deepseekApiKeyInput" type="password"[\s\S]*data-i18n-placeholder="settings\.deepseek\.apiKeyPlaceholder"/);
-  assert.match(details, /<input id="deepseekAccountLabelInput"[\s\S]*data-i18n-placeholder="settings\.deepseek\.labelPlaceholder"/);
-  assert.match(details, /<button id="deepseekSaveAccountButton"[\s\S]*data-i18n="settings\.deepseek\.saveAccount">/);
-  assert.doesNotMatch(details, /deepseekLogoutButton|deepseekRefreshButton|deepseekApiKeySubmit/);
+  // deepseek 已退役 dev 托管层（迁往上游 account slots）：静态面板整体移除，
+  // 设置表单回归声明驱动（limitAccountFormsForRenderer），无 renderer 专属代码。
+  assert.doesNotMatch(html, /deepseekAccountGroup|deepseekAccountList|deepseekAddToggle|deepseekApiKeyInput/);
 
   const app = readRendererFile('app.js');
   const setupBody = functionBodyBeforeMarker(app, 'setupCursorAccountUI', '\nsetupCursorAccountUI();');
-  assert.match(setupBody, /setupApiKeyAccountCard\('deepseek'/);
-  assert.match(setupBody, /window\.tokenMonitor\.openExternal\('https:\/\/platform\.deepseek\.com\/api_keys'\)/);
-  assert.doesNotMatch(setupBody, /saveSettings\(\{ deepseekApiKey/);
+  assert.doesNotMatch(setupBody, /setupApiKeyAccountCard\('deepseek'/);
 
   // minimax 已退役 dev 托管层：无表单声明，面板为上游共享账号外壳。
   const { limitAccountFormsForRenderer, initialAccountSettings } = require('../../src/electron/limits/accountSettings');
   const forms = limitAccountFormsForRenderer();
   assert.equal(forms.some(({ id }) => id === 'minimax'), false);
+  // deepseek 的声明表单仍在（上游标准单 key + 可选 console token）。
+  assert.equal(forms.some(({ id }) => id === 'deepseek'), true);
 
   // The region never becomes a credential: no store path, so it stays in
   // settings.json only after a selection; an implicit default stays empty.
@@ -1205,8 +1200,10 @@ test('Claude Web account panel stores a redacted cookie and opens only the usage
 
 test('DeepSeek key changes invalidate stale provider status before re-checking', () => {
   const app = readRendererFile('app.js');
-  assert.match(app, /deepseek: \{ group: 'deepseekAccountGroup', status: 'deepseekApiKeyStatus' \}/);
-  // 多账号状态 pill 走托管账号列表（x/y linked），与 MiMo 同路径。
+  // deepseek 已退役 dev 托管层：不再登记静态面板节点，状态走声明表单的
+  // 通用外部账号路径；deepseekPendingCheckSince 仍由上游通用机制使用。
+  assert.doesNotMatch(app, /deepseek: \{ group: 'deepseekAccountGroup', status: 'deepseekApiKeyStatus' \}/);
+  // 多账号状态 pill 走托管账号列表（x/y linked），与 MiMo 同路径（zai 在用）。
   assert.match(app, /function renderApiKeyAccountStatus\(provider\) \{[\s\S]*renderManagedAccountList\(\{/);
   assert.match(app, /deepseekPendingCheckSince: 0/);
 });
@@ -1214,9 +1211,9 @@ test('DeepSeek key changes invalidate stale provider status before re-checking',
 test('DeepSeek key changes invalidate stale provider status before re-checking', () => {
   const app = readRendererFile('app.js');
   const setupBody = functionBodyBeforeMarker(app, 'setupCursorAccountUI', '\nsetupCursorAccountUI();');
-  // 多账号流程：保存走专用 IPC（main 端先活体验证再入库），不再写单账号
-  // settings key，也没有 renderer 侧 pending 遮罩。
-  assert.match(setupBody, /setupApiKeyAccountCard\('deepseek'/);
+  // deepseek 已迁上游 account slots：保存走通用 slots IPC（main 端活体验证），
+  // renderer 不再挂托管卡片，也不写单账号 settings key。
+  assert.doesNotMatch(setupBody, /setupApiKeyAccountCard\('deepseek'/);
   assert.doesNotMatch(setupBody, /saveSettings\(\{ deepseekApiKey/);
   assert.doesNotMatch(app, /markDeepseekKeyCheckPending|deepseekAccountLinked/);
 });
@@ -1246,16 +1243,19 @@ test('DeepSeek managed accounts and MiniMax keys each save through their own IPC
   const app = readRendererFile('app.js');
   const main = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'electron', 'main.js'), 'utf8');
   const setupBody = functionBodyBeforeMarker(app, 'setupCursorAccountUI', '\nsetupCursorAccountUI();');
-  // dev 托管层（deepseek/zai）：保存走共用 setupApiKeyAccountCard → 专用
-  // IPC（main 端先活体验证再入库），不再写单账号 settings key。
-  assert.match(setupBody, /setupApiKeyAccountCard\('deepseek'/);
+  // dev 托管层仅剩 zai：保存走共用 setupApiKeyAccountCard → 专用 IPC（main
+  // 端先活体验证再入库），不再写单账号 settings key。deepseek 已迁上游
+  // account slots（limits:accountSlots:* 通用 IPC）。
+  assert.match(setupBody, /setupApiKeyAccountCard\('zai'/);
+  assert.doesNotMatch(setupBody, /setupApiKeyAccountCard\('deepseek'/);
   const saveBody = functionBody(app, 'setupApiKeyAccountCard', 'renderCopilotStatus');
   assert.match(saveBody, /window\.tokenMonitor\[provider\]\.addAccount\(keyInput\.value, labelInput\?\.value \|\| ''\)/);
   assert.match(saveBody, /window\.tokenMonitor\[provider\]\.updateAccount\(editingId, keyInput\.value, labelInput\?\.value \|\| ''\)/);
   assert.match(saveBody, /result\?\.errorCode === 'invalidApiKey'/);
   assert.match(saveBody, /result\?\.errorCode === 'credentialStorageUnavailable'/);
   assert.doesNotMatch(setupBody, /saveSettings\(\{ deepseekApiKey/);
-  // main 侧托管工厂（deepseek/zai）：活体验证先于持久化，存入 settings
+  assert.match(main, /accountSlotService = createAccountSlotService\(/);
+  // main 侧托管工厂（zai）：活体验证先于持久化，存入 settings
   // 前剥离密钥本体。
   const controllerBody = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'electron', 'apiKeyAccountControllers.js'), 'utf8');
   assert.match(controllerBody, /const validation = await validateAccount\(result\.account\);/);
@@ -1265,6 +1265,7 @@ test('DeepSeek managed accounts and MiniMax keys each save through their own IPC
   );
   assert.match(controllerBody, /delete result\.account\.apiKey/);
   assert.doesNotMatch(main, /apiKeyAccountProviders = \{[^}]*minimax:/);
+  assert.doesNotMatch(main, /apiKeyAccountProviders = \{[^}]*deepseek:/);
   // minimax 已退役托管层：多 key 面板走上游 createMinimaxApiKeys IPC。
   assert.match(main, /const minimaxApiKeys = createMinimaxApiKeys\(/);
   assert.match(main, /ipcMain\.handle\('minimax:getKeys'/);
@@ -1328,8 +1329,12 @@ test('MiMo account panel matches the manual Cookie provider layout', () => {
 });
 
 test('DeepSeek account copy says browser and external URL is allowlisted', () => {
-  const app = readRendererFile('app.js');
-  assert.match(app, /setupApiKeyAccountCard\('deepseek'[\s\S]*?platform\.deepseek\.com\/api_keys/);
+  // deepseek 迁上游 slots 后走声明表单的 openUrl，无 renderer 手写跳转；
+  // 文案键与 URL 白名单仍由声明与共享 allowlist 提供。
+  const { limitAccountFormsForRenderer } = require('../../src/electron/limits/accountSettings');
+  const form = limitAccountFormsForRenderer().find(({ id }) => id === 'deepseek');
+  assert.equal(form.openKey, 'settings.deepseek.openBrowser');
+  assert.deepEqual(form.openUrl, { url: 'https://platform.deepseek.com/api_keys' });
 
   const i18n = readRendererFile('i18n.js');
   assert.match(i18n, /'settings\.deepseek\.openBrowser': 'Open DeepSeek API keys in browser'/);
@@ -3352,4 +3357,34 @@ test('MiMo settings reuses the shared sign-in status for rejected accounts', () 
   providers = [{ provider: 'mimo', accountKey: 'a', sourceDetail: 'managed', status: 'ok' }];
   render();
   assert.equal([...list.children[0].walk()].find((node) => node.className === 'managed-account-info').textContent, 'Console');
+});
+
+test('Alibaba CLI readings keep saved Cookie setup reachable while web readings stay linked', () => {
+  const app = readRendererFile('app.js');
+  for (const source of ['cli', 'web']) {
+    const elements = new Map();
+    for (const suffix of ['AccountStatus', 'OpenBrowser', 'LogoutButton', 'RefreshButton', 'ManualPanel', 'ErrorMessage']) {
+      const classes = new Set();
+      elements.set(`alibaba${suffix}`, { textContent: '', classList: {
+        add: name => classes.add(name), remove: name => classes.delete(name),
+        toggle: (name, force) => force ? classes.add(name) : classes.delete(name),
+        contains: name => classes.has(name)
+      } });
+    }
+    runRendererFunctions(app, ['renderExternalProviderStatus'], "renderExternalProviderStatus('alibaba')", {
+      externalLimitAccountConfig: {},
+      limitAccountForm: () => ({ status: { configuredKey: 'alibabaCookieConfigured', sourceKey: 'alibabaCookieSource', pendingKey: 'alibabaPendingCheckSince' } }),
+      limitAccountPanelsApi: { syncCredentialFields() {} },
+      state: { settings: { alibabaCookieConfigured: true, alibabaCookieSource: 'settings' }, accountPanelMessages: {} },
+      document: { getElementById: id => elements.get(id) || null },
+      externalProviderForAccount: () => ({ provider: 'alibaba', source, status: 'ok' }),
+      externalProviderAccountLinked: () => true,
+      externalProviderCheckSettled: new Set(), limitProviderEnabled: () => true,
+      setCursorStatusText() {}, apiKeyAccountStatusText: () => '', t: key => key,
+      renderSettingsSummaries() {}, setExternalAccountExpanded() {}
+    });
+    assert.equal(elements.get('alibabaManualPanel').classList.contains('hidden'), source === 'web');
+    assert.equal(elements.get('alibabaOpenBrowser').classList.contains('hidden'), source === 'web');
+    assert.equal(elements.get('alibabaLogoutButton').classList.contains('hidden'), false);
+  }
 });

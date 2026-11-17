@@ -69,6 +69,7 @@ const { normalizeReasoningEffort, isSessionReasoningEffortClient } = require('./
 const { readT3Activities } = require('./t3SessionActivity');
 const { createProcessStartBatch } = require('./processStarts');
 const { catpawDatabaseName, catpawSourcesFingerprint } = require('./providers/catpaw/paths');
+const { isDshSessionLogName } = require('./providers/dsh/sessionFiles');
 const { readLocalUsageView, resolveLocalUsagePricing } = require('./providers/codex/localUsage');
 const { createLocalUsageSource } = require('./providers/codex/localUsageSource');
 const {
@@ -1534,13 +1535,10 @@ function activityReadOptions(options, extras, providers) {
   return { ...shared, ...(drivers.length ? { t3Activity: readT3Activities(shared, drivers) } : {}) };
 }
 
-// Sources that remain part of collection, health, and diagnostics but are too
-// broad for a persistent recursive watcher. Kiro globalStorage accepts every
-// `.chat`, `.json`, and extensionless file at any depth in tokscale, so a real
-// tree can require thousands of native directory watches; after descriptor
-// exhaustion the same tree becomes an even more expensive 2-second polling
-// watch. Regular interval ticks (five minutes by default), manual refreshes, and
-// hourly full reconciliation still scan it through the unchanged Kiro client.
+// GlobalStorage contains legacy conversations beside arbitrary project-file
+// checkpoints. Tokscale still traverses the complete tree on each Kiro scan;
+// pruning watcher paths alone cannot make frequent scans cheap. Keep this
+// source on interval/manual collection until the scanner bounds it too.
 const INTERVAL_ONLY_SOURCE_CHECK_IDS = new Set(['kiro-ide-globalstorage']);
 
 // The watcher only ever wants paths, so it keeps its original shape rather than
@@ -1734,16 +1732,15 @@ const OPENCLAW_AGENT_DB_WATCH_PATTERN = /^openclaw-agent\.sqlite(?:-(?:wal|shm))
 // directory names, so one set covers both.
 const OPENCLAW_CODEX_HOME_DIRS = new Set(['sessions', 'archived_sessions']);
 // OpenCode discovers only direct opencode.db / opencode-<channel>.db files.
-// WAL/SHM are not database inputs to tokscale, but they are the live-write
-// signals that must remain watched so a transaction committed before a
-// checkpoint refreshes the usage view.
+// WAL/SHM are not database inputs to tokscale. WAL events refresh transactions
+// committed before a checkpoint; scan-generated SHM events are filtered below.
 const OPENCODE_DB_WATCH_PATTERN = /^opencode(?:-[A-Za-z0-9._-]+)?\.db(?:-(?:wal|shm))?$/;
 // MiMo keeps a multi-gigabyte log/ tree alongside its SQLite state files.
 // A plain recursive watch of ~/.local/share/mimocode storms the watcher (every
 // SQLite WAL/SHM transaction is a chokidar event, the log dir holds thousands
 // of rotated files). Tokscale discovers mimocode.db and
 // mimocode-<channel>.db directly under each data root; the sidecars are not
-// parsed but must stay watched so a write through WAL/SHM triggers a refresh.
+// parsed. WAL writes trigger a refresh; scan-generated SHM events are filtered.
 // Keep the home dir watched but ignore everything except that direct db family.
 // The home root itself stays watched so a freshly created database or sidecar
 // still surfaces on the next top-level readdir.
@@ -1753,6 +1750,7 @@ const MIMO_DB_WATCH_PATTERN = /^mimocode(?:-[A-Za-z0-9._-]+)?\.db(?:-(?:wal|shm)
 // recurse through the application data trees around them.
 const KIRO_DB_WATCH_PATTERN = /^data\.sqlite3(?:-(?:wal|shm))?$/;
 const ZED_DB_WATCH_PATTERN = /^threads\.db(?:-(?:wal|shm))?$/;
+const KILO_DB_WATCH_PATTERN = /^kilo\.db(?:-(?:wal|shm))?$/;
 // Copilot is two exact databases directly under ~/.copilot, not one: `data.db`
 // (desktop) and `session-store.db` (CLI, tokscale's copilot_session_store
 // parser). Both are `path.is_file()` reads upstream, so the directory stays the
@@ -1868,12 +1866,27 @@ function ignoreDesktopTranscriptPath(parts, resolved) {
 }
 
 // Tokscale opens one exact database directly under this root instead of walking
-// it. Keep the direct children it names — including the WAL/SHM sidecars, which
-// are the live-write signal even though tokscale never parses them as databases
-// — so a database created later is still discovered, and never recurse into the
-// runtime files beside it.
+// it. Keep the direct children it names, including WAL/SHM sidecars, so a
+// database created later is still discovered. The event handler filters SHM
+// for measured self-writing clients; DB/WAL changes remain usage signals.
+// Never recurse into the runtime files beside it.
 function directChildOnly(isSource) {
   return (parts) => parts.length > 1 || !isSource(parts[0]);
+}
+
+// Keep directories for recursive discovery, but ignore files neither usage nor
+// metadata reads. Attachments, runtime databases and locks are not activity.
+// Reject directory links even when their names look like sources. Missing
+// source paths still pass so unlink events remain observable.
+function recursiveSourceFiles(isSource) {
+  return (parts, resolved) => {
+    const source = isSource(parts[parts.length - 1], parts);
+    try {
+      const stat = fs.lstatSync(resolved);
+      if (stat.isSymbolicLink()) return !source || !fs.statSync(resolved).isFile();
+      return !stat.isDirectory() && !source;
+    } catch (_) { return !source; }
+  };
 }
 
 // Every source root of every tracked client, paired with its policy. Bounded
@@ -1881,6 +1894,7 @@ function directChildOnly(isSource) {
 // entirely rather than hand chokidar a predicate that always answers false.
 function watchPolicyEntries(clientsCsv, options = {}) {
   const candidates = clientWatchCandidates(clientsCsv, options);
+  const rootsByClient = clientSourceRoots(clientsCsv, options);
   const customScanPaths = normalizeCustomScanPaths(options.customScanPaths, {
     platform: options.platform || process.platform
   });
@@ -1918,6 +1932,37 @@ function watchPolicyEntries(clientsCsv, options = {}) {
   const withBasename = (client, basename) =>
     (candidates[client] || []).filter((dir) => path.basename(dir) === basename);
 
+  const sourceRoots = (client, ...ids) => (rootsByClient[client] || [])
+    .filter((root) => ids.includes(root.id)).map((root) => root.dir);
+  // Claude's parser and source fingerprint also read same-stem agent metadata.
+  bound('claude', sourceRoots('claude', 'claude-projects', 'claude-transcripts'),
+    recursiveSourceFiles((name) => name.endsWith('.jsonl') || name.endsWith('.meta.json')));
+  bound('gemini', candidates.gemini || [],
+    recursiveSourceFiles((name) => name.endsWith('.json') || name.endsWith('.jsonl')));
+  bound('kilo', sourceRoots('kilo', 'kilo-db'), directChildOnly((name) => KILO_DB_WATCH_PATTERN.test(name)));
+  // Task history supplies legacy model/agent identity beside ui_messages.json.
+  const taskFiles = recursiveSourceFiles((name) => name === 'ui_messages.json' || name === 'api_conversation_history.json');
+  bound('kilo', sourceRoots('kilo', 'kilocode-tasks'), taskFiles);
+  bound('cline', sourceRoots('cline', 'cline-tasks'), taskFiles);
+  // Cline CLI reads a sibling <session>.json manifest for model and workspace.
+  bound('cline', sourceRoots('cline', 'cline-cli-sessions'), recursiveSourceFiles((name) => name.endsWith('.json')));
+  bound('dsh', candidates.dsh || [], recursiveSourceFiles(isDshSessionLogName));
+  // Rollups and model/session metadata can change without updates.jsonl growing.
+  bound('grok', sourceRoots('grok', 'grok-sessions'),
+    recursiveSourceFiles((name) => ['updates.jsonl', 'summary.json', 'signals.json', 'events.jsonl'].includes(name)));
+  // Tokscale accepts session.json in sess_* directories at any depth and
+  // reads messages.jsonl beside it. Keep the same discovery/link boundary.
+  const kiroSessionFiles = recursiveSourceFiles((name, parts) => parts[0] === 'cli'
+    ? name.endsWith('.json') || name.endsWith('.jsonl')
+    : parts.length > 1 && parts[parts.length - 2].startsWith('sess_')
+      && ['session.json', 'messages.jsonl'].includes(name));
+  bound('kiro', sourceRoots('kiro', 'kiro-sessions'), (parts, resolved) => {
+    // CLI is its own Tokscale scan root, so its root directory link is valid.
+    if (parts.length === 1 && parts[0] === 'cli') return false;
+    if (parts[0] !== 'cli' && parts.some((part, index) => part === 'snapshots' && index > 0 && parts[index - 1].startsWith('sess_'))) return true;
+    return kiroSessionFiles(parts, resolved);
+  });
+
   if (candidates.senpi) {
     const sources = options.senpiSources || senpiWatchSources(options);
     const targets = sources.targets.map(target => ({ ...target, path: canonicalRoot(target.path) }));
@@ -1947,7 +1992,7 @@ function watchPolicyEntries(clientsCsv, options = {}) {
   // Keep dynamic discovery ancestors, pruning dependency/VCS trees. Link
   // handling differs between discovery, scan roots and individual JSONL files.
   // IndexedDB roots and external blob trees are separate.
-  const desktopRoots = clientSourceRoots(clientsCsv, options).claude || [];
+  const desktopRoots = rootsByClient.claude || [];
   bound('claude', desktopRoots.filter(({ id, dir }) => id === 'claude-desktop-transcripts' && dirExists(dir)).map(({ dir }) => dir),
     ignoreDesktopTranscriptPath);
 
@@ -2002,7 +2047,7 @@ function watchPolicyEntries(clientsCsv, options = {}) {
   // can be $HOME — everything in it except that one file is pruned, and
   // watchAttributionRootsForClients keeps it from becoming a copilot prefix.
   const exporter = copilotExporterWatch(os.homedir());
-  if (exporter) bound('copilot', [exporter.dir], (_parts, resolved) => resolved !== exporter.canonicalFile);
+  if (candidates.copilot && exporter) bound('copilot', [exporter.dir], (_parts, resolved) => resolved !== exporter.canonicalFile);
 
   const cursorEnabled = String(clientsCsv || '').split(',').map((value) => value.trim().toLowerCase()).includes('cursor');
   // Cursor owns this source; Tokscale only reads its credentials/titles and
@@ -2051,7 +2096,7 @@ function watchPolicyEntries(clientsCsv, options = {}) {
   // Bound live traversal to that layout, while full Tokscale scans remain
   // recursive. Explicit extra scan roots keep the custom-root policy below.
   if (candidates['prime-agent']) {
-    const roots = clientSourceRoots('prime-agent', options)['prime-agent'];
+    const roots = rootsByClient['prime-agent'];
     const isTranscript = (name) => name.endsWith('.jsonl') && name !== 'rlm-subagents.jsonl';
     bound('prime-agent', roots.filter(({ id }) => id === 'prime-agent-sessions').map(({ dir }) => dir),
       directChildOnly(isTranscript));
@@ -2127,7 +2172,7 @@ function watchPolicyEntries(clientsCsv, options = {}) {
   // Candidates are bare paths, so a client that names its own built-in root as
   // a custom path too would read as custom twice over. Whether a root is
   // built-in comes from the source list instead, which still says so.
-  const builtInBySource = new Map(Object.entries(clientSourceRoots(clientsCsv, options)).map(([client, roots]) => [
+  const builtInBySource = new Map(Object.entries(rootsByClient).map(([client, roots]) => [
     client,
     new Set(roots.filter((root) => !root.custom).map((root) => canonicalRoot(root.dir)))
   ]));
@@ -2688,12 +2733,18 @@ function watcherOptions(usePolling, ignored) {
 // its unchanged record to the Hub about every 2 s.
 //
 // Only the sidecar is dropped. The real data signal lives in the database and
-// its -wal, so a genuine change still produces an event; a client whose scan was
-// measured NOT to rewrite its sidecar (mimo) is deliberately absent here, and
-// adding a client to this list asserts a measurement rather than a hunch.
+// its -wal, so a genuine change still produces an event. With the bundled 4.23
+// scanner, unchanged WAL fixtures also rewrite SHM on every Kilo, Kiro, Zed,
+// Hermes, Copilot, Unsloth, Devin and OpenClaw scan. OpenCode and MiMo rewrite
+// it on the first read before their source cache is warm. A read-only SQLite
+// connection can write its wal-index; it is not evidence of new token usage.
+// Adding a client to this list asserts a measurement rather than a hunch.
 // Cherry Studio, CatPaw and Goose also rewrite their wal-index on repeated read-only WAL scans.
 // Cursor's read-only desktop credential/title queries change state.vscdb-shm too.
-const SELF_WATCHED_SQLITE_SIDECAR_CLIENTS = Object.freeze(['antigravity', 'catpaw', 'cherrystudio', 'cursor', 'goose', 'zcode']);
+const SELF_WATCHED_SQLITE_SIDECAR_CLIENTS = Object.freeze([
+  'antigravity', 'catpaw', 'cherrystudio', 'copilot', 'cursor', 'devin', 'goose',
+  'hermes', 'kilo', 'kiro', 'mimo', 'opencode', 'openclaw', 'unsloth', 'zcode', 'zed'
+]);
 
 function isSelfWatchSqliteSidecarEvent(filePath, rootsByClient = {}) {
   // Match SQLite's wal-index suffix, not one client's database basename: ZCode's
@@ -3780,10 +3831,11 @@ function startCollector(options) {
       Object.entries(watchAttributionRootsForClients(clients, watchRoots, watchOptions))
         .map(([client, dirs]) => [client, dirs.map(canonicalWatchPath)])
     );
-    // Another client's policy may keep an event under a broad Prime root.
-    // Attribute it using Prime's own source policy, not the global union.
-    const attributionIgnores = rootsByClient['prime-agent']
-      ? { 'prime-agent': watchIgnoreMatcher('prime-agent', watchOptions) } : null;
+    // The shared watcher keeps the union of overlapping sources. An event
+    // retained for one client must not collect or self-sync another client
+    // whose own source policy rejects it.
+    const attributionIgnores = Object.fromEntries(Object.keys(rootsByClient)
+      .map(client => [client, watchIgnoreMatcher(client, watchOptions)]));
     // A subset of the same roots, matched separately so a write to a client's
     // parse-local data cannot pass for a write to its self-sync source.
     const sourceSyncRootsByClient = Object.fromEntries(
@@ -3846,7 +3898,7 @@ function startCollector(options) {
       ) {
         reasonixNativeSessionCache.invalidate(filePath);
       }
-      for (const client of clientsForWatchPath(filePath, sourceSyncRootsByClient)) {
+      for (const client of clientsForWatchPath(filePath, sourceSyncRootsByClient, attributionIgnores)) {
         // Catalog changes refresh labels, not the RPC usage cache.
         if (client === 'antigravity' && summaryFiles.has(path.resolve(filePath))) continue;
         // Another client's scan root may overlap the desktop store. Its unrelated

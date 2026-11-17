@@ -166,19 +166,6 @@ contextBridge.exposeInMainWorld('tokenMonitor', {
       return () => ipcRenderer.removeListener('mimo:accounts', handler);
     }
   },
-  deepseek: {
-    accounts: () => ipcRenderer.invoke('deepseek:accounts'),
-    addAccount: (apiKey, accountLabel) => ipcRenderer.invoke('deepseek:addAccount', apiKey, accountLabel),
-    updateAccount: (id, apiKey, accountLabel) => ipcRenderer.invoke('deepseek:updateAccount', id, apiKey, accountLabel),
-    reorderAccounts: (orderedIds) => ipcRenderer.invoke('deepseek:reorderAccounts', orderedIds),
-    removeAccount: (id) => ipcRenderer.invoke('deepseek:removeAccount', id),
-    setAccountEnabled: (id, enabled) => ipcRenderer.invoke('deepseek:setAccountEnabled', id, enabled),
-    onAccounts: (callback) => {
-      const handler = (_event, accounts) => callback(accounts);
-      ipcRenderer.on('deepseek:accounts', handler);
-      return () => ipcRenderer.removeListener('deepseek:accounts', handler);
-    }
-  },
   zai: {
     accounts: () => ipcRenderer.invoke('zai:accounts'),
     addAccount: (apiKey, accountLabel) => ipcRenderer.invoke('zai:addAccount', apiKey, accountLabel),
@@ -241,6 +228,7 @@ contextBridge.exposeInMainWorld('tokenMonitor', {
       ipcRenderer.on('limitsHistory:state', listener);
       return () => ipcRenderer.removeListener('limitsHistory:state', listener);
     },
+    accountSlots: Object.fromEntries(['list', 'add', 'replace', 'rename', 'setEnabled', 'remove', 'move'].map(operation => [operation, (...args) => ipcRenderer.invoke(`limits:accountSlots:${operation}`, ...args)])),
     saveCredential: (providerId, values) => ipcRenderer.invoke('limits:saveCredential', providerId, values),
     listOrganizationChoices: (providerId) => ipcRenderer.invoke('limits:listOrganizationChoices', providerId),
     clearCredential: (providerId) => ipcRenderer.invoke('limits:clearCredential', providerId),

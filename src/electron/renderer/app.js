@@ -103,10 +103,10 @@ const LIMIT_PROVIDER_ACCOUNT_NODES = {
   kimi: { group: 'kimiAccountGroup', status: 'kimiAccountStatus' },
   copilot: { group: 'copilotAccountGroup', status: 'copilotApiTokenStatus' },
   mimo: { group: 'mimoAccountGroup', status: 'mimoAccountStatus' },
-  // dev 多账号三家：面板为手写托管列表（不走声明表单），节点在此登记。
+  // dev 多账号（zai）：面板为手写托管列表（不走声明表单），节点在此登记。
+  // deepseek 已迁往上游 account slots，回归声明式表单渲染。
   zai: { group: 'zaiAccountGroup', status: 'zaiAccountStatus' },
   workbuddy: { group: 'workbuddyAccountGroup', status: 'workbuddyAccountStatus' },
-  deepseek: { group: 'deepseekAccountGroup', status: 'deepseekApiKeyStatus' },
   minimax: { group: 'minimaxAccountGroup', status: 'minimaxStatus' },
   openrouter: { group: 'openrouterAccountGroup', status: 'openrouterStatus' },
   volcengine: { group: 'volcengineAccountGroup', status: 'volcengineAccountStatus' },
@@ -10199,7 +10199,6 @@ function syncSettingsForm() {
   if (els.backgroundImageOpacityInput) els.backgroundImageOpacityInput.value = String(state.settings.backgroundImageOpacity ?? defaultAppearance.backgroundImageOpacity);
   els.zoomInput.value = String(Math.round((Number(state.settings.zoomFactor) || 1) * 100));
   syncSliderRows();
-  renderApiKeyAccountStatus('deepseek');
   renderApiKeyAccountStatus('zai');
   renderExternalProviderStatus('volcengine');
   renderExternalProviderStatus('kimi');
@@ -15273,7 +15272,6 @@ function renderStatsUpdate() {
   updateOpenRouterProfilesStatus();
   updateMinimaxApiKeysStatus();
   updateThirdPartyProfilesStatus();
-  renderApiKeyAccountStatus('deepseek');
   renderApiKeyAccountStatus('zai');
   renderExternalProviderStatus('volcengine');
   renderExternalProviderStatus('kimi');
@@ -15599,7 +15597,7 @@ function pickConfiguredSessionProviders(stats, configOrder) {
   // 托盘账号条目的顺序 = 用户在设置里维护的账号顺序（跨多账号供应商），
   // 与剩余额度无关；单账号供应商不提供顺序表。
   const accountOrderByProvider = {};
-  for (const provider of ['mimo', 'minimax', 'deepseek', 'zai', 'codex']) {
+  for (const provider of ['mimo', 'minimax', 'zai', 'codex']) {
     const accounts = state.settings?.[`${provider}ManagedAccounts`];
     if (Array.isArray(accounts) && accounts.length > 1) {
       accountOrderByProvider[provider] = accounts.map((account) => account.accountKey);
@@ -17062,7 +17060,7 @@ async function refreshCodexAccounts() {
 // local device's RAW limits from state.stats.devices — NOT the collapsed
 // state.stats.limits.providers. In sync mode, aggregateLimits() collapses a
 // local `unauthorized` row out in favor of a remote `ok` (providerCollapseKey
-// for deepseek/grok and keyless minimax rows is just the provider name;
+// for grok and keyless minimax rows is just the provider name;
 // pickBetterProvider keeps the higher statusRank). Searching the aggregate
 // would miss the local row and fall back to the remote `ok`, falsely reporting
 // an invalid local key as Linked. Only legacy/non-aggregated stats without a
@@ -17975,6 +17973,7 @@ function copilotAccountStatusText(provider, configured, source, enabled = true) 
 }
 
 function apiKeyAccountStatusText(providerName, provider, configured, source, enabled = true) {
+  if (providerName === 'alibaba' && provider?.source === 'cli') source = 'cli';
   const accountStatus = limitProviderPresentationApi.apiKeyAccountStatus(provider, configured, enabled);
   if (accountStatus === 'linked') {
     // A ZCode-discovered login is an OAuth-style link, not a pasted API key,
@@ -18240,7 +18239,8 @@ function renderExternalProviderStatus(providerName) {
   errorEl.textContent = message ? t(message.key, message.params) : '';
   errorEl.classList.toggle('hidden', !message);
   errorEl.classList.toggle('error', message?.tone !== 'notice');
-  const configured = Boolean(state.settings?.[config.configuredKey]);
+  const cliAccount = providerName === 'alibaba' && provider?.source === 'cli';
+  const configured = Boolean(state.settings?.[config.configuredKey] || cliAccount);
   const enabled = limitProviderEnabled(providerName);
   const settled = externalProviderCheckSettled.has(providerName);
   const pending = enabled && Number(state[config.pendingKey] || 0) > 0 && !settled;
@@ -18256,8 +18256,9 @@ function renderExternalProviderStatus(providerName) {
   // instead of a permanent spinner; the cutoff above still blocks the old
   // record from being read as a confirmed link.
   const statusProvider = provider || (settled && configured && enabled ? { status: 'noSyncedData' } : null);
-  const statusText = pending ? t('settings.common.checking')
+  let statusText = pending ? t('settings.common.checking')
     : apiKeyAccountStatusText(providerName, statusProvider, configured, source, enabled);
+  if (cliAccount && !pending) statusText = `CLI · ${statusText}`;
   setCursorStatusText(statusEl, providerName === 'claude' && !pending
     ? claudeAccountStatusText(statusText, enabled) : statusText);
   // A local ZCode install keeps the Z.ai row honest when unchecked: the
@@ -18276,6 +18277,7 @@ function renderExternalProviderStatus(providerName) {
   }
   const discoveredLogin = (providerName === 'zai' && source === 'zcode-auto')
     || (providerName === 'cline' && source === 'cline-signin')
+    || cliAccount
     || providerName === 'hark';
   if (discoveredLogin) {
     // The discovered login is not user-entered, so the override input and the
@@ -18315,7 +18317,7 @@ function setVolcengineAgentExpanded(expanded) {
   document.getElementById('volcengineAgentPanel')?.classList.toggle('expanded', next);
 }
 
-// ---------- API key 型供应商的设置卡片（minimax / deepseek / zai 共用）----------
+// ---------- API key 型供应商的设置卡片（minimax / zai 共用）----------
 // 全部按 provider 参数化：展开/收起、编辑态（复用添加表单）、状态渲染、
 // 事件绑定。i18n key 以 settings.<provider>.* 前缀由调用点传入字面量。
 
@@ -20603,11 +20605,6 @@ function setupCursorAccountUI() {
     }));
   }
 
-  setupApiKeyAccountCard('deepseek', () => {
-    document.getElementById('deepseekOpenBrowser')?.addEventListener('click', () => {
-      window.tokenMonitor.openExternal('https://platform.deepseek.com/api_keys');
-    });
-  });
   setupApiKeyAccountCard('zai', () => {
     const zaiApiRegionInput = document.getElementById('zaiApiRegionInput');
     if (zaiApiRegionInput) zaiApiRegionInput.value = state.settings?.zaiApiRegion === 'bigmodel-cn' ? 'bigmodel-cn' : 'global';

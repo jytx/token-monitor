@@ -203,6 +203,8 @@ const {
   redactThirdPartyProfilesForRenderer,
   rendererOmittedAccountKeys
 } = require('./limits/accountSettings');
+const { createAccountSlotService, invalidateAccountSlotChange } = require('./limits/accountSlotService');
+let accountSlotService;
 const { createCredentialCommands } = require('./limits/credentialCommands');
 const { createCopilotAccounts } = require('./providers/copilot/accounts');
 const copilotLimits = require('../shared/providers/copilot/limits');
@@ -347,7 +349,7 @@ const {
 const { createApiKeyAccountController } = require('./apiKeyAccountControllers');
 const { cleanApiKeySecret } = require('../shared/apiKeyAccounts');
 const { normalizeNamedProfileName } = require('../shared/namedProfile');
-const { fetchDeepSeekLimits } = require('../shared/providers/deepseek/limits');
+const { hashKey } = require('../shared/hashKey');
 const { fetchZaiLimits } = require('../shared/providers/zai/limits');
 const {
   minimaxApiProfiles,
@@ -975,7 +977,6 @@ function electronLimitsConfig() {
     defaultLimitProviders: defaultLimitProviders(),
     codexManagedAccounts: codexManagedAccountsForCollector(),
     mimoManagedAccounts: mimoManagedAccountsForCollector(),
-    deepseekManagedAccounts: apiKeyAccountControllers.deepseek.managedAccountsForCollector(),
     zaiManagedAccounts: apiKeyAccountControllers.zai.managedAccountsForCollector(),
     antigravityManagedAccounts: antigravityManagedAccountsForCollector()
   });
@@ -1094,6 +1095,7 @@ function electronLimitsDeps() {
         json: () => result.json()
       };
     },
+    onAccountSlotResolved: (...args) => { void accountSlotService?.resolved(...args).catch(() => {}); },
     resolveConfigSnapshot: () => electronLimitsConfig(),
     onClaudeWebCookieRenewed: persistClaudeWebCookieRenewal,
     onClaudeWebAccountResolved: (observation) => claudeAccountService().resolved(observation),
@@ -1723,7 +1725,7 @@ function validateApiKeyAccountVia(fetchLimits, accountsOptionKey) {
 
 const apiKeyAccountProviders = {
   // minimax 已退役托管层，改用上游 profiles + OAuth（PR #1284），见 migrateMinimaxManagedAccounts。
-  deepseek: { fetchLimits: fetchDeepSeekLimits, accountsOptionKey: 'deepseekManagedAccounts' },
+  // deepseek 已退役托管层，改用上游 account slots（见 migrateDeepseekManagedAccounts）。
   zai: { fetchLimits: fetchZaiLimits, accountsOptionKey: 'zaiManagedAccounts' }
 };
 
@@ -2753,11 +2755,50 @@ function migrateMinimaxManagedAccounts(store, saved) {
   }
 }
 
+// dev 托管多账号（deepseek）退役迁移：把 settings.deepseekManagedAccounts 的
+// 账号一次性搬进上游 account slots 结构（deepseekAccountSlots）。两侧
+// accountKey 公式一致（hashKey('deepseek', apiKey)），搬迁后账号身份、
+// 余额历史（deepseek-balance-v2.json 按 accountKey 存）与聚合行保持连续。
+// slot id 沿用托管账号 id；凭据从 credentialStore 的托管区读出后随 slot
+// values 明文留在 settings（与上游 accountSlotService.save 的持久化一致）。
+function migrateDeepseekManagedAccounts(store, saved) {
+  const accounts = Array.isArray(saved?.deepseekManagedAccounts) ? saved.deepseekManagedAccounts : [];
+  if (!accounts.length) return;
+  const timestamp = new Date().toISOString();
+  const slots = [];
+  for (const account of accounts) {
+    const id = String(account?.id || '').trim();
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) continue;
+    const apiKey = cleanApiKeySecret(store.readManagedAccountCredential('deepseek', id, 'apiKey'));
+    if (!apiKey) continue;
+    slots.push({
+      id,
+      label: String(account?.accountLabel || '').trim(),
+      enabled: account?.enabled !== false,
+      values: { deepseekApiKey: apiKey },
+      accountKey: hashKey('deepseek', apiKey),
+      accountKeyAliases: [],
+      serverIdentity: false,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+  }
+  if (!slots.length) return;
+  try {
+    saved.deepseekAccountSlots = [...(Array.isArray(saved.deepseekAccountSlots) ? saved.deepseekAccountSlots : []), ...slots];
+    delete saved.deepseekManagedAccounts;
+    console.log(`[credentials] Migrated ${slots.length} deepseek managed account(s) to account slots`);
+  } catch (error) {
+    reportCredentialStorageError('could not migrate deepseek managed accounts', error);
+  }
+}
+
 function loadCredentialSettings(saved) {
   try {
     const store = ensureCredentialStore();
     store.migrateLegacySettings(saved);
     migrateMinimaxManagedAccounts(store, saved);
+    migrateDeepseekManagedAccounts(store, saved);
     const stored = store.settingsCredentials();
     // Cleanup is intentionally independent from the migration marker. If the
     // first cleanup write fails after credentials.json was committed, retry on
@@ -2965,9 +3006,10 @@ function readSettings() {
     merged.workbuddyManagedAccounts = workbuddyOAuth.normalizeManagedAccounts(merged.workbuddyManagedAccounts);
     merged.mimoManagedAccounts = normalizeMimoManagedAccounts(merged.mimoManagedAccounts);
     // minimax 托管账号已迁移为上游 profiles（migrateMinimaxManagedAccounts），
+    // deepseek 托管账号已迁移为上游 account slots（migrateDeepseekManagedAccounts），
     // 残留的旧元数据不再参与任何投影。
     delete merged.minimaxManagedAccounts;
-    merged.deepseekManagedAccounts = normalizeApiKeyAccountsMeta(merged.deepseekManagedAccounts);
+    delete merged.deepseekManagedAccounts;
     merged.zaiManagedAccounts = normalizeApiKeyAccountsMeta(merged.zaiManagedAccounts);
     if (saved.keepAboveTaskbar !== undefined) {
       merged.keepAboveTaskbar = parseBoolean(saved.keepAboveTaskbar, false);
@@ -5967,12 +6009,11 @@ function settingsForRenderer() {
     antigravityManagedAccounts: antigravityAccountsForRenderer(),
     workbuddyManagedAccounts: workbuddyAccountsForRenderer(),
     mimoManagedAccounts: mimoAccountsForRenderer(),
-    deepseekManagedAccounts: apiKeyAccountControllers.deepseek.accountsForRenderer(),
     zaiManagedAccounts: apiKeyAccountControllers.zai.accountsForRenderer(),
     ...accountStatusProjection(settings, process.env),
-    // dev 多账号：两家的“已配置”兼容单 key 与托管账号（任一启用账号即视为已配置），
-    // 覆盖上面的派生投影。minimax 已改由 accountStatus 动态计算（profiles 多 key）。
-    deepseekApiKeyConfigured: Boolean(settings?.deepseekApiKey) || (apiKeyAccountControllers.deepseek.accountsForRenderer() || []).some((account) => account.enabled !== false),
+    // dev 多账号（zai）：“已配置”兼容单 key 与托管账号（任一启用账号即视为已配置），
+    // 覆盖上面的派生投影。minimax 已改由 accountStatus 动态计算（profiles 多 key），
+    // deepseek 已迁往上游 account slots，由标准 accountStatus 投影。
     zaiApiKeyConfigured: Boolean(settings?.zaiApiKey) || (apiKeyAccountControllers.zai.accountsForRenderer() || []).some((account) => account.enabled !== false),
     claudeWebLegacyAccount: claudeAccountService().legacyAccount(),
     claudeWebLoginStatuses: claudeAccountService().loginStatuses(),
@@ -8487,6 +8528,28 @@ app.whenReady().then(() => {
     applySettingsPatch: applyCredentialSettingsPatch,
     probeDeps: credentialProbeDeps
   });
+  accountSlotService = createAccountSlotService({
+    getSettings: () => settings,
+    write: (patch) => {
+      settings = { ...settings, ...patch };
+      saveSettings({ throwOnError: true });
+    },
+    probeDeps: credentialProbeDeps,
+    onChanged: (provider, change) => {
+      deviceRuntimeHandle?.reconfigureLimits(electronLimitsConfig());
+      // A rename or reorder is re-projected by the reconfigure above; asking the
+      // provider again would only spend its rate limit.
+      if (change?.refresh === false) return;
+      if (deviceRuntimeHandle) return invalidateAccountSlotChange(deviceRuntimeHandle, provider, change);
+      // No runtime yet: the retired accounts are cleared once one starts.
+      for (const accountKey of change?.retiredAccountKeys || []) {
+        void queueLimitInvalidation({ provider, accountKey }, 'settings-change', { clear: true, refresh: false });
+      }
+    }
+  });
+  for (const operation of ['list', 'add', 'replace', 'rename', 'setEnabled', 'remove', 'move']) {
+    ipcMain.handle(`limits:accountSlots:${operation}`, (_event, ...args) => accountSlotService[operation](...args));
+  }
   // Resolves only once a worker-hosted transform runs with the saved settings:
   // pausing the session archive must not be reported done while the worker can
   // still capture under the old value.

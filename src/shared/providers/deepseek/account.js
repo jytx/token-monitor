@@ -4,15 +4,9 @@
 // DeepSeek limits account wiring. Leaf module: no requires.
 module.exports = /** @satisfies {import('../../limits/accounts').AccountDeclaration} */ ({
   id: 'deepseek',
+  accountSlots: true,
   fetch: 'fetchDeepSeekLimits',
   fields: [
-    {
-      key: 'deepseekManagedAccounts',
-      kind: 'managed',
-      contextOverride: true,
-      persist: 'never',
-      initial: []
-    },
     {
       key: 'deepseekApiKey',
       kind: 'credential',
@@ -27,18 +21,28 @@ module.exports = /** @satisfies {import('../../limits/accounts').AccountDeclarat
       normalize: { fn: 'normalizeDeepseekWebToken', style: 'value' }
     }
   ],
-  // dev 多账号：面板为手写托管列表，只借共享保存路径（同 kimi/volcengine 的 custom 模式）。
-  // webToken 为上游新增的 provider 级 console 会话凭据（可选 Search/Fetch
-  // 花费来源），settings 层可用；dev 手写面板暂未提供输入入口。
-  form: {
-    kind: 'custom',
-    fields: [{ key: 'deepseekApiKey' }]
-  },
   status: {
     credential: 'deepseekApiKey',
     configuredKey: 'deepseekApiKeyConfigured',
     sourceKey: 'deepseekApiKeySource',
     pendingKey: 'deepseekPendingCheckSince'
+  },
+  form: {
+    titleKey: 'settings.deepseek.title',
+    openKey: 'settings.deepseek.openBrowser',
+    clearKey: 'settings.deepseek.clearApiKey',
+    saveKey: 'settings.deepseek.saveApiKey',
+    emptyKey: 'settings.deepseek.statusNotSet',
+    failedKey: 'settings.deepseek.saveFailed',
+    fields: [
+      { key: 'deepseekApiKey', input: 'password', placeholderKey: 'settings.deepseek.apiKeyPlaceholder', required: true },
+      { key: 'deepseekWebToken', input: 'password', labelKey: 'settings.deepseek.webTokenLabel' }
+    ],
+    manual: [
+      { note: 'settings.deepseek.note' }, { field: 'deepseekApiKey' },
+      { note: 'settings.deepseek.webTokenNote' }, { field: 'deepseekWebToken' }
+    ],
+    openUrl: { url: 'https://platform.deepseek.com/api_keys' }
   },
   urlPolicy: [
     { hosts: ['platform.deepseek.com'], pathPrefixes: ['/api_keys'] }

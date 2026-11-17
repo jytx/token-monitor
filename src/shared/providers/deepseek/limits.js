@@ -1,28 +1,16 @@
 'use strict';
 
-// DeepSeek 余额采集（多账号）。
-//
-// DeepSeek 没有限流窗口，唯一的配额就是预付余额，以 credits 窗口上报
-//（钱，无 wire 百分比）。多账号与单账号兼容路径共存：
-// options.deepseekManagedAccounts 非空时逐账号探测返回多行，为空时走旧
-// 单 key/env 路径（headless agent 不受影响）。
-//
-// 消费记录（todaySpend 等）由同目录 balanceHistory 按账号分键存储，
-// accountKey = hashKey('deepseek', key) 与单账号时代一致，多账号天然
-// 隔离、迁移后历史连续。Reached through providerFetchers() in
+// DeepSeek limits provider: the API-key balance read, and the derived spend it
+// records through ./balanceHistory.js. Reached through providerFetchers() in
 // src/shared/limits/collector.js.
 
 const path = require('node:path');
 const { recordConsumption } = require('./balanceHistory');
 const { sharedDataDir } = require('../../config');
-const { normalizeLimitProvider } = require('../../limits/core');
-const { hashKey } = require('../../hashKey');
 const {
-  apiKeyAccountDisplayLabel,
-  cleanApiKeySecret,
-  managedApiKeyAccountKey,
-  scopedApiKeyManagedAccounts
-} = require('../../apiKeyAccounts');
+  normalizeLimitProvider
+} = require('../../limits/core');
+const { hashKey } = require('../../hashKey');
 const {
   cleanSecret,
   errorWithStatus,
@@ -32,16 +20,11 @@ const {
   providerStatusFromError
 } = require('../../limits/providerHelpers');
 
-const DEEPSEEK_BALANCE_URL = 'https://api.deepseek.com/user/balance';
-const DEEPSEEK_KEY_NAMES = ['DEEPSEEK_API_KEY', 'DEEPSEEK_KEY'];
-// Private console endpoint: needs a signed-in session token, read for the current month only.
-const DEEPSEEK_CONSOLE_COST_URL = 'https://platform.deepseek.com/api/v0/usage/by_api_key/cost';
-
 function deepseekToken(env = process.env, explicitKey = '') {
-  const explicit = cleanApiKeySecret(explicitKey);
+  const explicit = cleanSecret(explicitKey);
   if (explicit) return explicit;
-  for (const name of DEEPSEEK_KEY_NAMES) {
-    const raw = cleanApiKeySecret(env[name]);
+  for (const name of ['DEEPSEEK_API_KEY', 'DEEPSEEK_KEY']) {
+    const raw = cleanSecret(env[name]);
     if (raw) return raw;
   }
   return '';
@@ -65,20 +48,9 @@ function selectFundedRow(rows) {
   return parsed.find((r) => r.currency === 'USD') || parsed[0];
 }
 
-// 账号级状态行：多账号路径的失败/未配置行必须携带账号身份，否则
-// limitsRuntime 会把不同账号的失败行全部落到 provider 通配 identity 上
-// 互相覆盖（rowIdentityKey 优先取 accountKey）。
-function deepseekStatusProvider(status, updatedAt, account) {
-  return normalizeLimitProvider({
-    provider: 'deepseek',
-    source: 'api',
-    status,
-    updatedAt,
-    accountKey: account?.accountKey || '',
-    accountLabel: account ? apiKeyAccountDisplayLabel(account) : '',
-    windows: []
-  });
-}
+const DEEPSEEK_BALANCE_URL = 'https://api.deepseek.com/user/balance';
+// Private console endpoint: needs a signed-in session token, read for the current month only.
+const DEEPSEEK_CONSOLE_COST_URL = 'https://platform.deepseek.com/api/v0/usage/by_api_key/cost';
 
 // Accept a bare or pasted Authorization token; reject anything that is not one.
 function normalizeDeepseekWebToken(value) {
@@ -129,22 +101,23 @@ async function fetchToolSpends(token, { accountKey, currency, now }, deps) {
   }
 }
 
-// 探测单个 DeepSeek 密钥。account 为 null 表示单账号兼容路径（旧
-// settings.deepseekApiKey 或 env 密钥），保持历史行为——错误行不带账号
-// 身份、标签为 'Pay-as-you-go' 套餐名。webToken 为 provider 级 console
-// 会话令牌（可选），非空时给余额行附加当月 Search/Fetch 花费。
-async function probeDeepSeekAccountKey(key, account, deps, webToken) {
+async function fetchDeepSeekLimits(options = {}, deps = {}) {
+  const env = deps.env || process.env;
   const now = (deps.now || Date.now)();
+  const key = deepseekToken(env, options.deepseekApiKey);
+  if (!key) {
+    return normalizeLimitProvider({ provider: 'deepseek', source: 'api', status: 'notConfigured', updatedAt: nowIso(now), windows: [] });
+  }
+  // The key names the account before any request, so a failed read stays on
+  // that account instead of becoming a keyless provider row.
+  const accountKey = hashKey('deepseek', key);
   try {
-    // 共享 fetchJson 的默认映射与 DeepSeek 预期一致：401 → unauthorized，
-    // 403 保持 unavailable（DeepSeek 的 403 不是凭据错误），429 → sourceRateLimited。
     const data = await fetchJson(DEEPSEEK_BALANCE_URL, { Authorization: `Bearer ${key}`, Accept: 'application/json' }, deps);
     if (!data || !Array.isArray(data.balance_infos)) {
       throw errorWithStatus('unavailable', 'unexpected balance response shape');
     }
     const row = selectFundedRow(data.balance_infos);
-    const accountKey = account ? account.accountKey : managedApiKeyAccountKey('deepseek', key);
-    const dataDir = sharedDataDir({ env: deps.env || process.env });
+    const dataDir = sharedDataDir({ env });
     const storePath = deps.deepseekStorePath || path.join(dataDir, 'deepseek-balance-v2.json');
     const legacyStorePath = deps.deepseekLegacyStorePath
       || (deps.deepseekStorePath ? null : path.join(dataDir, 'deepseek-balance.json'));
@@ -154,13 +127,12 @@ async function probeDeepSeekAccountKey(key, account, deps, webToken) {
       { accountKey, currency: row.currency, paid: row.paid, now, storePath, legacyStorePath },
       deps
     );
+    const webToken = normalizeDeepseekWebToken(options.deepseekWebToken);
     const toolSpends = await fetchToolSpends(webToken, { accountKey, currency: row.currency, now }, deps);
     return normalizeLimitProvider({
       provider: 'deepseek',
       accountKey,
-      accountLabel: account
-        ? apiKeyAccountDisplayLabel(account) || 'Pay-as-you-go'
-        : 'Pay-as-you-go',
+      accountLabel: 'Pay-as-you-go',
       source: 'api',
       status: 'ok',
       updatedAt: nowIso(now),
@@ -186,39 +158,20 @@ async function probeDeepSeekAccountKey(key, account, deps, webToken) {
       }
     });
   } catch (error) {
-    return deepseekStatusProvider(providerStatusFromError(error), nowIso(now), account);
+    return normalizeLimitProvider({
+      provider: 'deepseek',
+      source: 'api',
+      accountKey,
+      status: providerStatusFromError(error),
+      updatedAt: nowIso(now),
+      windows: []
+    });
   }
-}
-
-async function fetchDeepSeekLimits(options = {}, deps = {}) {
-  const env = deps.env || process.env;
-  // Console webToken 是 provider 级可选凭据，对每个账号的余额行
-  // 附加同一会话下的当月 Search/Fetch 花费。
-  const webToken = normalizeDeepseekWebToken(options.deepseekWebToken);
-  const scope = options.limitRefreshScope?.provider === 'deepseek'
-    ? options.limitRefreshScope
-    : null;
-  const accounts = scopedApiKeyManagedAccounts('deepseek', options.deepseekManagedAccounts, scope);
-  if (accounts.length > 0) {
-    return Promise.all(accounts.map(
-      (account) => probeDeepSeekAccountKey(account.apiKey, account, deps, webToken)
-    ));
-  }
-  // 单账号兼容路径：GUI 迁移前的 settings.deepseekApiKey 或 env 密钥
-  //（headless agent 仍走这里），行为与多账号改造前完全一致。
-  const key = deepseekToken(env, options.deepseekApiKey);
-  if (!key) {
-    return deepseekStatusProvider('notConfigured', nowIso((deps.now || Date.now)()), null);
-  }
-  return probeDeepSeekAccountKey(key, null, deps, webToken);
 }
 
 module.exports = {
-  DEEPSEEK_BALANCE_URL,
-  DEEPSEEK_KEY_NAMES,
   deepseekToken,
   fetchDeepSeekLimits,
   normalizeDeepseekWebToken,
-  probeDeepSeekAccountKey,
   selectFundedRow
 };
