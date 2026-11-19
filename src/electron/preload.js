@@ -166,19 +166,6 @@ contextBridge.exposeInMainWorld('tokenMonitor', {
       return () => ipcRenderer.removeListener('mimo:accounts', handler);
     }
   },
-  zai: {
-    accounts: () => ipcRenderer.invoke('zai:accounts'),
-    addAccount: (apiKey, accountLabel) => ipcRenderer.invoke('zai:addAccount', apiKey, accountLabel),
-    updateAccount: (id, apiKey, accountLabel) => ipcRenderer.invoke('zai:updateAccount', id, apiKey, accountLabel),
-    reorderAccounts: (orderedIds) => ipcRenderer.invoke('zai:reorderAccounts', orderedIds),
-    removeAccount: (id) => ipcRenderer.invoke('zai:removeAccount', id),
-    setAccountEnabled: (id, enabled) => ipcRenderer.invoke('zai:setAccountEnabled', id, enabled),
-    onAccounts: (callback) => {
-      const handler = (_event, accounts) => callback(accounts);
-      ipcRenderer.on('zai:accounts', handler);
-      return () => ipcRenderer.removeListener('zai:accounts', handler);
-    }
-  },
   exportNow: () => ipcRenderer.invoke('export:now'),
   pickExportDir: () => ipcRenderer.invoke('export:pickAutoDir'),
   getTokscaleStatus: () => ipcRenderer.invoke('tokscale:getStatus'),
@@ -219,16 +206,16 @@ contextBridge.exposeInMainWorld('tokenMonitor', {
     setAccountEnabled: (id, enabled) => ipcRenderer.invoke('claude:setAccountEnabled', id, enabled)
   },
   limits: {
-    openHistory: (key, rect, interactive = false) => ipcRenderer.invoke('limitsHistory:open', { key, rect, interactive }),
+    openHistory: (key, rect, interactive = false, requestId) => ipcRenderer.invoke('limitsHistory:open', { key, rect, interactive, requestId }),
     enterHistory: key => ipcRenderer.send('limitsHistory:enter', key),
     leaveHistory: key => ipcRenderer.send('limitsHistory:leave', key),
-    closeHistory: () => ipcRenderer.send('limitsHistory:close'),
+    closeHistory: (requestId = null) => ipcRenderer.send('limitsHistory:close', requestId),
     onHistoryState: callback => {
       const listener = (_event, open, key) => callback(open, key);
       ipcRenderer.on('limitsHistory:state', listener);
       return () => ipcRenderer.removeListener('limitsHistory:state', listener);
     },
-    accountSlots: Object.fromEntries(['list', 'add', 'replace', 'rename', 'setEnabled', 'remove', 'move'].map(operation => [operation, (...args) => ipcRenderer.invoke(`limits:accountSlots:${operation}`, ...args)])),
+    accountSlots: Object.fromEntries(['list', 'add', 'replace', 'rename', 'setEnabled', 'remove', 'move', 'presentation'].map(operation => [operation, (...args) => ipcRenderer.invoke(`limits:accountSlots:${operation}`, ...args)])),
     saveCredential: (providerId, values) => ipcRenderer.invoke('limits:saveCredential', providerId, values),
     listOrganizationChoices: (providerId) => ipcRenderer.invoke('limits:listOrganizationChoices', providerId),
     clearCredential: (providerId) => ipcRenderer.invoke('limits:clearCredential', providerId),
@@ -257,13 +244,6 @@ contextBridge.exposeInMainWorld('tokenMonitor', {
     getKeys: () => ipcRenderer.invoke('minimax:getKeys'),
     addKey: (key) => ipcRenderer.invoke('minimax:addKey', key),
     removeKey: (id) => ipcRenderer.invoke('minimax:removeKey', id)
-  },
-  openrouter: {
-    getProfiles: () => ipcRenderer.invoke('openrouter:getProfiles'),
-    saveProfile: (name, apiKey) => ipcRenderer.invoke('openrouter:saveProfile', name, apiKey),
-    deleteProfile: (name) => ipcRenderer.invoke('openrouter:deleteProfile', name),
-    renameProfile: (oldName, newName) => ipcRenderer.invoke('openrouter:renameProfile', oldName, newName),
-    setProfileEnabled: (name, enabled) => ipcRenderer.invoke('openrouter:setProfileEnabled', name, enabled)
   },
   thirdparty: {
     getProfiles: () => ipcRenderer.invoke('thirdparty:getProfiles'),

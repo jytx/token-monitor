@@ -1849,11 +1849,9 @@ for (const id of ['codex', 'minimax']) {
     assert.equal(group.find('limit-plan').textContent, '4 accounts');
     assert.equal([...group.walk()].filter((node) => node.classNames.has('limit-account-row')).length, 4);
 
-    // A provider with no count phrase of its own prints nothing rather than the
-    // untranslated key. dev 分支给 deepseek/zai 补了 settings.<id>.nAccounts 文案
-    //（多账号组头），deepseek 不再是"无短语"样本——用不存在的 id 保持前提。
-    const untranslated = dockView().renderLimitProviderGroup('future-provider', 'Future', [account('a@x'), account('b@x')], '#4D6BFE');
-    assert.equal(untranslated.find('limit-plan').textContent, '');
+    // Providers without specialized wording show the shared localized count.
+    const untranslated = dockView().renderLimitProviderGroup('deepseek', 'DeepSeek', [account('a@x'), account('b@x')], '#4D6BFE');
+    assert.equal(untranslated.find('limit-plan').textContent, '2 accounts');
   });
 }
 
