@@ -173,7 +173,7 @@ function createAccountSlotFetcher(entry) {
     delete callOptions[`${entry.id}AmbientAccounts`];
     delete callOptions[key];
     if (account.values) {
-      for (const field of entry.fields) if (field.key !== key && field.key !== `${entry.id}SourcePreference`) callOptions[field.key] = '';
+      for (const field of entry.fields) if (field.key !== key) callOptions[field.key] = '';
       Object.assign(callOptions, account.values);
     }
     callOptions.previousLimits = {
@@ -293,6 +293,8 @@ function createAccountSlotFetcher(entry) {
           }
         }
         const { accountKeyAliases: _reported, ...answer } = row;
+        // A scoped refresh can publish the observation under one of its local aliases.
+        if (answer.accountKeyPortable && accountKey !== row.accountKey) delete answer.accountKeyPortable;
         if (complete && !scopeKey && row.status === 'ok') deps.providerRuntimeState?.set(`account-name:${entry.id}:${accountKey}`, row.accountName || '');
         // A slot's local name is its accountName (the runtime projects the same
         // rule onto retained readings); the provider's accountLabel carries the plan.

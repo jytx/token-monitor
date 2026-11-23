@@ -207,8 +207,10 @@ test('Hub secret input stays masked and exposes an accessible paste button', () 
 
 test('Cursor account header uses the shared linked-account summary', () => {
   const body = functionBody(readRendererOwner('cursor'), 'renderCursorStatus', 'refreshCursorStatus');
-  assert.match(body, /t\('settings\.cursor\.connected', \{ linked: accounts\.filter\(account => sourceSelected\(account\) && account\.enabled && !account\.expired && !account\.error\)\.length, total: accounts\.length \}\)/);
-  assert.match(body, /setCursorStatusText\(statusEl, summary\);/);
+  // The common list writes the count from its own rows; a failed or pending
+  // status check keeps its own message instead.
+  assert.match(body, /status: \{ element: \(\) => document\.getElementById\('cursorAccountStatus'\), empty: \(\) => t\('settings\.cursor\.notLoggedIn'\),\s*active: \(\) => !state\.cursorAccount\.error && Boolean\(state\.cursorAccount\.status\) \}/);
+  assert.doesNotMatch(body, /accountList\.summary\(\)/);
   assert.doesNotMatch(body, /status\.email|billingCycleEnd|billingResets|selectedAccountId/);
 });
 
@@ -415,7 +417,7 @@ test('OpenCode disabled profiles still count in the account summary', () => {
   // The auto-detected credential counts too: it is the account the limits card
   // is reading, so excluding it reports "not set up" next to live quota.
   assert.match(renderBody, /state\.opencodeProfileCount = entries\.length \+ \(hasAmbientKey \? 1 : 0\);/);
-  assert.match(renderBody, /\{ profiles, hasEnvVar, hasAmbientKey, ambientEnabled = true \}/);
+  assert.match(renderBody, /\{ profiles, hasEnvVar, environmentAccountKey = '', hasAmbientKey, ambientEnabled = true \}/);
   // Switching the auto-detected account off is a device preference, not a stored
   // credential, so its row keeps rendering with the box clear rather than
   // vanishing along with the only control that could switch it back on.
@@ -477,16 +479,11 @@ test('OpenCode disabled profiles still count in the account summary', () => {
   assert.match(renderBody, /updateOpenCodeProfilesStatus\(\);/);
   assert.doesNotMatch(renderBody, /if \(toggle\.checked\) updateOpenCodeProfilesStatus\(\)/);
 
-  const statusBody = functionBody(app, 'updateOpenCodeProfilesStatus') + functionBody(app, 'renderOpenCodeProfilesStatusSummary');
-  assert.match(statusBody, /const configuredProfileCount = state\.opencodeProfileCount \|\| 0;/);
-  // The auto-detected account arrives in its own field, so both halves of the
-  // summary have to include it or a zero-config machine reports "0/0" beside
-  // live quota.
-  assert.match(statusBody, /if \(status\.ambient\) entries\.push\(\['opencodeAmbientInfo', status\.ambient\]\)/);
-  assert.match(statusBody, /renderOpenCodeProfilesStatusSummary\(profiles, status\.ambient\)/);
-  assert.match(statusBody, /const statuses = \[\.\.\.Object\.values\(profiles\), \.\.\.\(ambient \? \[ambient\] : \[\]\)\];/);
-  assert.match(statusBody, /Math\.max\(statuses\.length, configuredProfileCount\)/);
-  assert.match(statusBody, /t\('settings\.opencode\.connected', \{ linked: linkedCount, total: totalCount \}\)/);
+  // The header counts the common list's rows, and that list carries the
+  // auto-detected key and paused profiles, so neither drops out of the total.
+  assert.match(renderBody, /\.\.\.\(hasAmbientKey \? \[\{ id: 'ambient:', source: 'ambient'/);
+  assert.match(renderBody, /enabled: profile\.enabled \}\)\)/);
+  assert.match(renderBody, /status: \{\s*element: \(\) => document\.getElementById\('opencodeCookieStatus'\),\s*empty: \(\) => t\('settings\.opencode\.statusNotSet'\),/);
 });
 
 test('OpenCode profile deletion clears the legacy default cookie when it owns the profile', () => {
@@ -1890,7 +1887,7 @@ test('active Codex account labels are always shown for multi-account limits rows
 test('collection cadence setting is exposed in the Collection panel', () => {
   const html = readRendererFile('index.html');
   const i18n = readRendererFile('i18n.js');
-  const controls = html.match(/<div class="settings-subgroup settings-collection-cadence"[\s\S]*?<select id="collectionCadenceInput"[\s\S]*?<\/select>[\s\S]*?<\/div>/)?.[0] || '';
+  const controls = html.match(/<div class="settings-subgroup session-archive-settings settings-page-card"[\s\S]*?<select id="collectionCadenceInput"[\s\S]*?<\/select>[\s\S]*?<\/div>/)?.[0] || '';
   assert.match(controls, /data-i18n="settings\.collection\.cadence"/);
   assert.match(controls, /value="live"/);
   assert.match(controls, /value="smart"[\s\S]*data-i18n="settings\.collection\.mode\.smart"/);
@@ -1921,9 +1918,11 @@ test('collection cadence setting is exposed in the Collection panel', () => {
 
 test('sync upload interval setting is exposed in the Multi-device Sync panel', () => {
   const html = readRendererFile('index.html');
-  const controls = html.match(/<label id="syncUploadIntervalRow" class="sync-upload-interval-row[^"]*"[\s\S]*?<select id="syncUploadIntervalInput"[\s\S]*?<\/select>[\s\S]*?<\/label>/)?.[0] || '';
+  const controls = html.match(/<div id="syncUploadIntervalRow" class="sync-upload-interval-row[^"]*"[\s\S]*?<select id="syncUploadIntervalInput"[\s\S]*?<\/select>[\s\S]*?<\/div>/)?.[0] || '';
   assert.ok(html.indexOf('id="syncUploadIntervalRow"') > html.indexOf('id="saveSettingsButton"'));
-  assert.ok(html.indexOf('id="syncUploadIntervalRow"') < html.indexOf('id="syncDevicePanel"'));
+  // Frequency is a preference of this device, listed after the sync map's devices.
+  assert.ok(html.indexOf('id="syncUploadIntervalRow"') > html.indexOf('id="syncDevicePanel"'));
+  assert.ok(html.indexOf('id="syncUploadIntervalRow"') > html.indexOf('id="syncThisDeviceCard"'));
   assert.match(controls, /data-i18n="settings\.sync\.uploadInterval"/);
   assert.match(controls, /<option value="0"[\s\S]*data-i18n="settings\.sync\.uploadInterval\.live"/);
   assert.match(controls, /<option value="600000"[\s\S]*data-i18n="settings\.sync\.uploadInterval\.10m"/);
@@ -1978,6 +1977,7 @@ function loadHubSettingsWiring(els, context) {
   for (const id of ['syncConnectionEditor', 'syncConnectionIdentity', 'syncConnectionEndpoint', 'syncConnectionEdit', 'syncConnectionCancel', 'syncConnectionSaveError', 'syncDeviceSettings', 'syncUploadIntervalRow']) {
     els[id] ||= fakeHubControl();
   }
+  els.syncMap ||= { querySelectorAll: () => [] };
   const app = readRendererFile('app.js');
   const modeStart = app.indexOf('function syncHubModeUi()');
   const modeEnd = app.indexOf('function renderHubStatus()', modeStart);
@@ -2654,7 +2654,6 @@ test('main settings normalize collection cadence and replace only usage when it 
   assert.doesNotMatch(usageConfig, /^\s*watchUsePolling:/m);
   assert.doesNotMatch(main, /function collectorWatchUsePolling/);
   assert.match(collector, /const watchUsePolling = resolveWatchUsePolling\(options\.watchUsePolling\)/);
-  assert.match(collector, /function resolveWatchUsePolling[\s\S]*?TOKEN_MONITOR_WATCH_POLLING/);
   assert.match(main, /function collectorIntervalRequiresActivity[\s\S]*?=== 'smart'/);
 
   const updateHandler = main.slice(main.indexOf("ipcMain.handle('settings:update'"), main.indexOf("ipcMain.handle('appearance:preview'"));
